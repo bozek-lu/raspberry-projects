@@ -12,6 +12,7 @@ from claude_client import ask_claude
 
 FINANCE_PATH = "/home/lbx/server/homepage/public/finance.json"
 SPENDING_PATH = "/home/lbx/server/actual/bank-sync/spending.json"
+BACKUP_STATUS_PATH = "/home/lbx/backup_status.json"
 # Not worth suggesting cuts in: family, fixed bills and money moved to Revolut
 NO_CUT_CATEGORIES = {"Family & friends", "Housing fees", "Energy, internet & phone", "Health & insurance", "Bank fees", "Revolut", "Uncategorized"}
 REMINDERS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pandora_reminders.json")
@@ -105,6 +106,21 @@ def savings_tip():
 	)
 
 
+def backup_line():
+	# Written by ~/backup/backup.sh after every run; a stale file means the timer stopped firing
+	try:
+		with open(BACKUP_STATUS_PATH) as f:
+			status = json.load(f)
+		age = datetime.datetime.now().timestamp() - os.path.getmtime(BACKUP_STATUS_PATH)
+	except (OSError, ValueError):
+		return "⚠️ Backup: brak informacji o ostatnim backupie"
+	if not status.get("ok"):
+		return f"⚠️ Backup nie wyszedł ({status.get('time')}): {status.get('message')}"
+	if age > 30 * 3600:
+		return f"⚠️ Backup: ostatni udany {status.get('time')}, ponad dobę temu"
+	return f"💾 Backup: ok {status.get('time')} ({status.get('message')})"
+
+
 def build_message():
 	today = datetime.date.today()
 	reminders = load_reminders()
@@ -139,5 +155,5 @@ def build_message():
 	results = lotto.message()
 	if results:
 		lines += ["", results]
-	lines += ["", pi, usage]
+	lines += ["", pi, backup_line(), usage]
 	return "\n".join(lines)
