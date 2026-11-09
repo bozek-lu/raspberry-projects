@@ -1,0 +1,21 @@
+# Secrets: never commit. Real values live only on the Pi (~/.env, /etc/homepi-backup/).
+.env
+*.env
+.env.*
+!env.example
+secrets.yaml
+secrets.env
+push_tokens.json
+rclone.conf
+*.pem
+*.key
+restic-password
+
+# Data and noise
+__pycache__/
+*.pyc
+*.log
+*.bak*
+*.orig*
+node_modules/
+.DS_Store

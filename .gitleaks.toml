@@ -1,0 +1,19 @@
+# Default gitleaks rules plus extras for this repo.
+[extend]
+useDefault = true
+
+# The default telegram rule needs the word "telegram" nearby; catch bare bot tokens too.
+[[rules]]
+id = "telegram-bot-token-bare"
+description = "Telegram bot token"
+regex = '''\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b'''
+
+[[rules]]
+id = "uptime-kuma-push-token"
+description = "Uptime Kuma push URL token"
+regex = '''/api/push/[A-Za-z0-9]{8,}'''
+
+[[rules]]
+id = "claude-oauth-token"
+description = "Claude / Anthropic token"
+regex = '''sk-ant-[A-Za-z0-9_-]{20,}'''

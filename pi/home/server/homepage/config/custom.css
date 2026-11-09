@@ -1,0 +1,4 @@
+/* Dark blue gradient behind the cards */
+html, body, #page_wrapper {
+  background: radial-gradient(circle at 15% 0%, #1e3a5f 0%, #0f172a 45%, #020617 100%) fixed !important;
+}

@@ -1,0 +1,23 @@
+# restic excludes (one pattern per line). Reinstallable or rebuildable stuff only.
+/home/lbx/.cache
+/home/lbx/.local
+/home/lbx/.npm
+/home/lbx/.venvs
+/home/lbx/.oh-my-zsh
+/home/lbx/.config/chromium
+/home/lbx/libcamera-apps
+/home/lbx/WiringPi
+/home/lbx/rpi-clone
+/home/lbx/homeassistant/deps
+/home/lbx/homeassistant/tts
+/home/lbx/homeassistant-backup-*.tgz
+/home/lbx/server/actual/bank-sync/cache
+/home/lbx/server/actual/bank-sync/cache-bridge
+node_modules
+__pycache__
+*.log
+*.log.[0-9]
+# Live SQLite files: consistent copies are taken into the staging folder instead
+/home/lbx/server/vaultwarden/data/db.sqlite3*
+/home/lbx/server/uptime-kuma/data/kuma.db*
+/home/lbx/homeassistant/home-assistant_v2.db*

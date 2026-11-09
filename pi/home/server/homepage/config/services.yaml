@@ -1,0 +1,305 @@
+- Today:
+    - Weather in Zamość:
+        icon: mdi-weather-partly-rainy
+        href: https://open-meteo.com/en/docs#latitude=50.72&longitude=23.25
+        description: Forecast for today, refreshed every 30 minutes
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/status.json
+          refreshInterval: 60000
+          display: list
+          mappings:
+            - field: weather_sky
+              label: Sky
+            - field: weather_temp
+              label: Temperature
+            - field: weather_rain
+              label: Rain chance / amount
+            - field: weather_rain_hours
+              label: Most likely rain
+            - field: weather_wind
+              label: Wind
+            - field: weather_sun
+              label: Sunrise – sunset
+
+    - Lotto:
+        icon: mdi-clover
+        href: https://www.lotto.pl/lotto/wyniki-i-wygrane
+        description: Official LOTTO API, refreshed at 7:00 and 23:00
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/lotto.json
+          refreshInterval: 300000
+          display: list
+          mappings:
+            - field: last_draw
+              label: Last draw
+            - field: plus
+              label: Plus
+            - field: prizes
+              label: Prizes
+            - field: my_sets
+              label: My sets
+            - field: my_won
+              label: Won last draw
+            - field: next_lotto
+              label: Next Lotto
+            - field: next_euro
+              label: Next Eurojackpot
+            - field: spent_month
+              label: Spent this month
+            - field: updated
+              label: Updated
+
+- Raspberry Pi:
+    - Status:
+        icon: raspberry-pi.png
+        description: Updated every minute
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/status.json
+          refreshInterval: 30000
+          display: list
+          mappings:
+            - field: power
+              label: Power
+            - field: temp
+              label: Temperature
+            - field: uptime
+              label: Uptime
+            - field: containers
+              label: Containers
+            - field: disk_free
+              label: Free space
+            - field: updated
+              label: Updated
+    - Telegram bot:
+        icon: telegram.png
+        href: https://web.telegram.org
+        description: "Pandora: /help for all commands"
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/status.json
+          refreshInterval: 30000
+          display: list
+          mappings:
+            - field: bot
+              label: Service
+            - field: messages_today
+              label: Messages today
+            - field: users_today
+              label: People today
+            - field: messages_week
+              label: Messages (7 days)
+            - field: users_allowed
+              label: Accepted people
+            - field: users_pending
+              label: Waiting for approval
+            - field: reminders
+              label: Reminders
+            - field: last_morning
+              label: Last morning message
+            - field: last_activity
+              label: Last activity
+    - Claude plan:
+        icon: si-anthropic
+        href: https://claude.ai/settings/usage
+        description: Limits via CodexBar on the Pi; Mac costs pushed from the Mac
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/status.json
+          refreshInterval: 30000
+          display: list
+          mappings:
+            - field: claude_5h_left
+              label: Session left
+            - field: claude_5h_reset
+              label: Session resets
+            - field: claude_week_left
+              label: Weekly left
+            - field: claude_week_reset
+              label: Weekly resets
+            - field: claude_week_pace
+              label: Weekly pace
+            - field: claude_mac_today
+              label: Mac today (API value)
+            - field: claude_mac_30d
+              label: Mac 30 days
+            - field: claude_top_model
+              label: Top model
+            - field: claude_limits_updated
+              label: Limits updated
+            - field: claude_mac_updated
+              label: Mac data updated
+    - Claude on Pi:
+        icon: si-anthropic
+        description: Bot questions and morning tips (API-equivalent value)
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/status.json
+          refreshInterval: 30000
+          display: list
+          mappings:
+            - field: claude_calls_today
+              label: Calls today
+            - field: claude_tokens_today
+              label: Tokens today
+            - field: claude_cost_today
+              label: Value today
+            - field: claude_calls_week
+              label: Calls (7 days)
+            - field: claude_cost_month
+              label: Value this month
+
+- Budget:
+    - This month:
+        icon: mdi-wallet
+        href: https://homepi.tail04e168.ts.net
+        description: mBank Personal, from Actual Budget
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/finance.json
+          refreshInterval: 300000
+          display: list
+          mappings:
+            - field: month_in
+              label: In
+            - field: month_out
+              label: Spent
+            - field: month_saved
+              label: Saved
+            - field: top_month
+              label: Top categories
+    - Overview:
+        icon: mdi-chart-box
+        href: https://homepi.tail04e168.ts.net
+        description: mBank Personal
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/finance.json
+          refreshInterval: 300000
+          display: list
+          mappings:
+            - field: balance
+              label: Balance
+            - field: last_month_out
+              label: Spent last month
+            - field: avg_out_3m
+              label: Avg spent (3 months)
+            - field: uncategorized
+              label: Uncategorized (3 months)
+            - field: updated
+              label: Updated
+
+- Monitoring:
+    - CPU:
+        widget:
+          type: glances
+          url: http://host.docker.internal:61208
+          version: 4
+          metric: cpu
+          chart: true
+    - Memory:
+        widget:
+          type: glances
+          url: http://host.docker.internal:61208
+          version: 4
+          metric: memory
+          chart: true
+    - Temperature:
+        widget:
+          type: glances
+          url: http://host.docker.internal:61208
+          version: 4
+          metric: sensor:cpu_thermal 0
+          chart: true
+    - Network:
+        widget:
+          type: glances
+          url: http://host.docker.internal:61208
+          version: 4
+          metric: network:eth0
+          chart: true
+    - Disk:
+        widget:
+          type: glances
+          url: http://host.docker.internal:61208
+          version: 4
+          metric: fs:/rootfs
+          chart: true
+    - Top processes:
+        href: http://homepi.tail04e168.ts.net:61208
+        widget:
+          type: glances
+          url: http://host.docker.internal:61208
+          version: 4
+          metric: process
+          chart: false
+
+- Smart home:
+    - Home Assistant:
+        icon: home-assistant.png
+        href: http://homepi.tail04e168.ts.net:8123
+        description: Devices, automations, sensors
+        server: local
+        container: homeassistant
+        widget:
+          type: homeassistant
+          url: http://host.docker.internal:8123
+          key: "{{HOMEPAGE_VAR_HA_TOKEN}}"
+
+- Network:
+    - AdGuard Home:
+        icon: adguard-home.png
+        href: http://homepi.tail04e168.ts.net:3000
+        description: Ad and tracker blocking
+        server: local
+        container: adguardhome
+        widget:
+          type: adguard
+          url: http://host.docker.internal:3000
+          username: "{{HOMEPAGE_VAR_ADGUARD_USER}}"
+          password: "{{HOMEPAGE_VAR_ADGUARD_PASS}}"
+    - Tailscale:
+        icon: tailscale.png
+        href: https://login.tailscale.com/admin/machines
+        description: Manage devices, DNS, sharing and keys
+
+- Apps:
+    - Actual Budget:
+        icon: actual-budget.png
+        href: https://homepi.tail04e168.ts.net
+        description: Budget, synced with mBank
+        server: local
+        container: actual
+    - Vaultwarden:
+        icon: vaultwarden.png
+        href: https://homepi.tail04e168.ts.net:8443
+        description: Passwords (works with Bitwarden apps)
+        server: local
+        container: vaultwarden
+    - Uptime Kuma:
+        icon: uptime-kuma.png
+        href: http://homepi.tail04e168.ts.net:3001
+        description: Alerts when a service goes down
+        server: local
+        container: uptime-kuma
+
+- Management:
+    - Portainer:
+        icon: portainer.png
+        href: http://homepi.tail04e168.ts.net:9000
+        description: Start, stop, logs, updates
+        server: local
+        container: portainer
+    - Glances:
+        icon: glances.png
+        href: http://homepi.tail04e168.ts.net:61208
+        description: Full system monitor
+        server: local
+        container: glances
+    - Homepage:
+        icon: homepage.png
+        description: This dashboard
+        server: local
+        container: homepage

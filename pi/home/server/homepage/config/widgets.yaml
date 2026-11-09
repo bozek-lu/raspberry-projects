@@ -1,0 +1,19 @@
+- resources:
+    label: homepi
+    cpu: true
+    memory: true
+    cputemp: true
+    tempmin: 20
+    tempmax: 80
+    uptime: true
+    disk: /
+    network: eth0
+    units: metric
+- search:
+    provider: duckduckgo
+    target: _blank
+- datetime:
+    text_size: xl
+    format:
+      timeStyle: short
+      dateStyle: medium

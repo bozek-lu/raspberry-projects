@@ -1,0 +1,25 @@
+# Diun: Telegram message when a running container's image has an update.
+# Notify only - nothing is pulled or restarted. Secrets in .env (see env.example).
+services:
+  diun:
+    image: crazymax/diun:4
+    container_name: diun
+    command: serve
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Europe/Warsaw
+      LOG_LEVEL: info
+      DIUN_WATCH_WORKERS: "4"
+      DIUN_WATCH_SCHEDULE: "0 9 * * *"
+      DIUN_WATCH_JITTER: 5m
+      DIUN_WATCH_FIRSTCHECKNOTIF: "false"
+      DIUN_PROVIDERS_DOCKER: "true"
+      DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "true"
+      DIUN_NOTIF_TELEGRAM_TEMPLATEBODY: |
+        🆕 Aktualizacja: {{ .Entry.Image }}
+        Kontener: {{ .Entry.Metadata.ctn_names }}
+        {{ if .Entry.Image.HubLink }}{{ .Entry.Image.HubLink }}{{ end }}
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro

@@ -1,0 +1,19 @@
+services:
+  homepage:
+    container_name: homepage
+    image: ghcr.io/gethomepage/homepage:latest
+    restart: unless-stopped
+    ports:
+      - "80:3000"
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: "*"
+    # Logins for the AdGuard and Home Assistant tiles, filled in by hand
+    env_file:
+      - path: ./secrets.env
+        required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config:/app/config
+      - ./public:/app/public/status:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro

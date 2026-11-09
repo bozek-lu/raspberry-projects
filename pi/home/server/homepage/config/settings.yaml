@@ -1,0 +1,42 @@
+title: homepi
+favicon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/raspberry-pi.png
+theme: dark
+color: slate
+headerStyle: boxed
+cardBlur: md
+statusStyle: dot
+showStats: true
+hideVersion: true
+layout:
+  Raspberry Pi:
+    style: row
+    columns: 3
+    icon: raspberry-pi.png
+  Budget:
+    style: row
+    columns: 2
+    icon: mdi-cash
+  Monitoring:
+    style: row
+    columns: 3
+    icon: mdi-chart-line
+  Today:
+    style: row
+    columns: 1
+    icon: mdi-weather-partly-cloudy
+  Smart home:
+    style: row
+    columns: 2
+    icon: home-assistant.png
+  Network:
+    style: row
+    columns: 2
+    icon: mdi-lan
+  Apps:
+    style: row
+    columns: 3
+    icon: mdi-apps
+  Management:
+    style: row
+    columns: 3
+    icon: mdi-tools

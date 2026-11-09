@@ -1,0 +1,14 @@
+services:
+  vaultwarden:
+    container_name: vaultwarden
+    image: vaultwarden/server:latest
+    restart: unless-stopped
+    # Only reachable through tailscale serve (HTTPS on :8443)
+    ports:
+      - "127.0.0.1:8222:80"
+    environment:
+      DOMAIN: "https://homepi.tail04e168.ts.net:8443"
+      SIGNUPS_ALLOWED: "false"
+      TZ: Europe/Warsaw
+    volumes:
+      - ./data:/data

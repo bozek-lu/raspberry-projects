@@ -1,0 +1,14 @@
+services:
+  actual-bridge:
+    container_name: actual-bridge
+    image: node:22-alpine
+    restart: unless-stopped
+    # Local API for the Telegram bot spending review (bridge.mjs), on 127.0.0.1:5007
+    network_mode: host
+    working_dir: /app
+    command: node bridge.mjs
+    env_file: .env
+    environment:
+      TZ: Europe/Warsaw
+    volumes:
+      - ./:/app

@@ -1,0 +1,65 @@
+# rsync filter: what is code/config (tracked in git) vs data/secrets (never synced).
+# Used by ../pi-sync.sh in both directions. Paths are relative to /home/lbx on the Pi.
+
+# --- secrets & credentials: never ---
+- .env
+- *.env
+- .env.*
+- secrets.yaml
+- push_tokens.json
+- .credentials.json
+- rclone.conf
+
+# --- runtime data, state, logs, caches ---
+- __pycache__/
+- *.pyc
+- *.log
+- *.log.*
+- *.tmp
+- *.bak*
+- *.orig*
+- node_modules/
+- cache/
+- cache-bridge/
+- data/
+- data-backup-*/
+- spending.json
+- server/adguard/conf/
+- server/adguard/work/
+- server/homepage/public/
+- server/homepage/config.bak-*/
+- server/homepage/config/logs/
+- homeassistant/deps/
+- homeassistant/tts/
+- homeassistant/blueprints/
+- homeassistant/.storage/
+- homeassistant/*.db*
+- homeassistant/*.fault
+- homeassistant/.*
+
+# --- tracked: bot + helper scripts in ~ ---
++ /*.py
++ /*.sh
++ /TelegramBot/
++ /TelegramBot/*.py
++ /TelegramBot/README.md
++ /server/
++ /server/*/
++ /server/*/compose.yaml
++ /server/actual/bank-sync/
++ /server/actual/bank-sync/*.mjs
++ /server/actual/bank-sync/*.sh
++ /server/actual/bank-sync/package*.json
++ /server/actual/bank-sync/compose.yaml
++ /server/homepage/config/
++ /server/homepage/config/*.yaml
++ /server/homepage/config/*.css
++ /server/homepage/config/*.js
++ /server/diun/
++ /server/diun/env.example
++ /homeassistant/
++ /homeassistant/*.yaml
++ /homeassistant/compose.yaml
++ /backup/
++ /backup/**
+- *

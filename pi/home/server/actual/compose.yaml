@@ -1,0 +1,12 @@
+services:
+  actual:
+    container_name: actual
+    image: actualbudget/actual-server:latest
+    restart: unless-stopped
+    # Only reachable through tailscale serve (HTTPS on :443, needed for bank sync)
+    ports:
+      - "127.0.0.1:5006:5006"
+    environment:
+      TZ: Europe/Warsaw
+    volumes:
+      - ./data:/data

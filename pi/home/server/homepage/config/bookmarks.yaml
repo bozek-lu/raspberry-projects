@@ -1,0 +1,20 @@
+- Tailscale:
+    - Devices:
+        - abbr: TS
+          href: https://login.tailscale.com/admin/machines
+    - DNS:
+        - abbr: DN
+          href: https://login.tailscale.com/admin/dns
+    - Settings:
+        - abbr: ST
+          href: https://login.tailscale.com/admin/settings/general
+- Links:
+    - Claude usage:
+        - abbr: CL
+          href: https://claude.ai/settings/usage
+    - Telegram:
+        - abbr: TG
+          href: https://web.telegram.org
+    - Pi documentation:
+        - abbr: PI
+          href: https://www.raspberrypi.com/documentation/
