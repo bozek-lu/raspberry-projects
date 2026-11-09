@@ -86,11 +86,15 @@
             - field: bot
               label: Service
             - field: messages_today
-              label: Messages today
+              label: Received today
+            - field: sent_today
+              label: Sent today
             - field: users_today
               label: People today
             - field: messages_week
-              label: Messages (7 days)
+              label: Received (7 days)
+            - field: sent_week
+              label: Sent (7 days)
             - field: users_allowed
               label: Accepted people
             - field: users_pending

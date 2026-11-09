@@ -12,10 +12,18 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 
 ## Workflow
 
+Edit here, commit, push, then deploy:
+
 ```bash
-./pi-sync.sh pull     # Pi -> repo, then: git diff
-./pi-sync.sh push     # repo -> Pi (never deletes)
+git commit -am "..." && git push
+./deploy.sh           # committed + pushed code -> Pi, restarts what changed
+./pi-sync.sh pull     # if you edited files directly on the Pi: Pi -> repo, then commit
 ```
+
+`deploy.sh` refuses to run with uncommitted or unpushed changes, and stops if files on the Pi
+were edited since the last deploy (commit hash kept in `~/.deployed_commit` on the Pi).
+It restarts Pandora when bot scripts change, runs `docker compose up -d` for changed compose files,
+and reloads the backup timer when its units change. It never deletes files on the Pi.
 
 ## Secrets
 

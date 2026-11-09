@@ -32,7 +32,7 @@ def kind_of(text):
 
 def day_entry(data, date):
 	day = data["days"].setdefault(date.isoformat(), {})
-	for key in ("messages", "claude", "shell", "commands", "fun", "claude_calls", "claude_tokens", "claude_cost"):
+	for key in ("messages", "sent", "claude", "shell", "commands", "fun", "claude_calls", "claude_tokens", "claude_cost"):
 		day.setdefault(key, 0)
 	day.setdefault("users", [])
 	return day
@@ -50,6 +50,14 @@ def record(user_id, text):
 	data["last_activity"] = now.strftime("%d.%m %H:%M")
 	# Keep 30 days of history
 	data["days"] = dict(sorted(data["days"].items())[-30:])
+	save(data)
+
+
+def record_sent():
+	# Every message Pandora sends: replies, morning message, photos, dice
+	data = load()
+	day_entry(data, datetime.date.today())["sent"] += 1
+	data["total_sent"] = data.get("total_sent", 0) + 1
 	save(data)
 
 
@@ -90,6 +98,9 @@ def today():
 		"users_today": len(day.get("users", [])),
 		"messages_week": sum(d["messages"] for _, d in week),
 		"messages_total": data["total"],
+		"sent_today": day.get("sent", 0),
+		"sent_week": sum(d.get("sent", 0) for _, d in week),
+		"sent_total": data.get("total_sent", 0),
 		"last_activity": data["last_activity"] or "-",
 		"last_morning": data["last_morning"] or "-",
 	}

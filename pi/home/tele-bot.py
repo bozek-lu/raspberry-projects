@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import (ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters)
+from telegram.ext import (ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, ExtBot, MessageHandler, filters)
 
 load_dotenv()
 
@@ -26,6 +26,15 @@ logging.basicConfig(
 # httpx logs request URLs, which contain the bot token
 logging.getLogger("httpx").setLevel(logging.WARNING)
 TELEGRAM_API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
+
+
+class CountingBot(ExtBot):
+	# Every Bot API send* call goes through _post, so this counts all outgoing messages in one place
+	async def _post(self, endpoint, *args, **kwargs):
+		result = await super()._post(endpoint, *args, **kwargs)
+		if endpoint.startswith("send") and endpoint != "sendChatAction":
+			bot_stats.record_sent()
+		return result
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	if not is_allowed(update):
@@ -240,7 +249,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 if __name__ == '__main__':
-	application = ApplicationBuilder().token(TELEGRAM_API_TOKEN).build()
+	application = ApplicationBuilder().bot(CountingBot(TELEGRAM_API_TOKEN)).build()
 
 	pandora_filter = PandoraFilter()
 
