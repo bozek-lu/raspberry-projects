@@ -5,7 +5,6 @@ import os
 import bot_stats
 import claude_limits
 import pi_status
-import lotto
 import pandora
 import weather
 from claude_client import ask_claude
@@ -152,8 +151,5 @@ def build_message():
 		cut = savings_tip()
 		if cut:
 			lines.append(f"✂️ {cut}")
-	results = lotto.message()
-	if results:
-		lines += ["", results]
-	lines += ["", pi, backup_line(), usage]
+	lines += ["", pi, backup_line(), usage, "", f"🏠 Panel (Tailscale): {pi_status.base_url()}"]
 	return "\n".join(lines)

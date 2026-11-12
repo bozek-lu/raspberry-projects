@@ -64,7 +64,7 @@ async def access_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_morning(context: ContextTypes.DEFAULT_TYPE):
 	owner = os.getenv("TELEGRAM_OWNER_ID")
 	text = await asyncio.to_thread(morning.build_message)
-	await context.bot.send_message(owner, text)
+	await context.bot.send_message(owner, text, disable_web_page_preview=True)
 	bot_stats.record_morning()
 	# Now and then a photo of herself, because she can
 	if random.random() < 0.3:
