@@ -5,7 +5,7 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-# Writes the Homepage "Devices on network" tile data (run every 10 minutes by cron).
+# Writes the Homepage "Devices on network" tile data (run every 2 hours by cron).
 # Names: optional ~/network_names.json, {"aa:bb:cc:dd:ee:ff": "Living room TV"} (stays on the Pi).
 HOME = "/home/lbx"
 OUT = f"{HOME}/server/homepage/public/devices.json"
