@@ -264,6 +264,18 @@
           url: http://host.docker.internal:3000
           username: "{{HOMEPAGE_VAR_ADGUARD_USER}}"
           password: "{{HOMEPAGE_VAR_ADGUARD_PASS}}"
+    - Devices on network:
+        icon: mdi-lan
+        description: LAN scan every 10 minutes; names in ~/network_names.json on the Pi
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/devices.json
+          refreshInterval: 60000
+          display: dynamic-list
+          mappings:
+            items: devices
+            name: name
+            label: ip
     - Tailscale:
         icon: tailscale.png
         href: https://login.tailscale.com/admin/machines
