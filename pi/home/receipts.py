@@ -15,7 +15,13 @@ PAPERLESS = "http://127.0.0.1:8010"
 PUBLIC_URL = "https://homepi.tail04e168.ts.net:8444"
 BRIDGE = "http://127.0.0.1:5007"
 TAG = "paragon"
-STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pandora_receipts.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+# Receipts still waiting for their bank transaction
+STATE_PATH = os.path.join(HERE, "pandora_receipts.json")
+# Every receipt and what became of it, for the Homepage tile
+LOG_PATH = os.path.join(HERE, "pandora_receipts_log.json")
+TILE_PATH = "/home/lbx/server/homepage/public/receipts.json"
+LOG_KEEP = 400
 # Bank card payments can post days later; keep looking for this long
 RETRY_DAYS = 10
 OCR_TIMEOUT = 15 * 60
@@ -88,6 +94,19 @@ def document(doc_id):
 		return client.get(f"/api/documents/{doc_id}/").raise_for_status().json()
 
 
+def duplicates(doc):
+	"""Earlier copies of exactly the same file (Paperless v3 keeps both and flags them)."""
+	return [d for d in doc.get("duplicate_documents") or [] if not d.get("deleted_at") and d["id"] < doc["id"]]
+
+
+def delete(doc_id):
+	# Goes to the Paperless trash, which keeps it for 30 days
+	with _paperless() as client:
+		client.delete(f"/api/documents/{doc_id}/").raise_for_status()
+	forget(doc_id)
+	set_status(doc_id, "deleted")
+
+
 def rename(doc_id, info):
 	parts = [info.get("date"), info.get("merchant"), _zl(info["total"]) if info.get("total") else None]
 	fields = {"title": " · ".join(p for p in parts if p)}
@@ -126,17 +145,27 @@ def matchable(info):
 # --- Actual ---
 
 def candidates(info):
+	"""Matching spending, split into (without a receipt, already with a receipt)."""
 	amount = round(info["total"] * 100)
 	url = f"{BRIDGE}/match?amount={amount}&date={info['date']}"
 	found = httpx.get(url, timeout=60).raise_for_status().json()["transactions"]
-	# A transaction that already has a receipt is not a candidate again
-	return [t for t in found if MARK not in t["notes"]]
+	free = [t for t in found if MARK not in t["notes"]]
+	taken = [t for t in found if MARK in t["notes"]]
+	return free, taken
+
+
+def receipt_of(tx):
+	"""Paperless id of the receipt already attached to this transaction."""
+	found = re.search(re.escape(MARK) + r"(\d+)", tx["notes"])
+	return int(found.group(1)) if found else None
 
 
 def attach(doc_id, tx):
 	note = f"{MARK}{doc_id} {link(doc_id)}"
 	notes = f"{tx['notes']}\n{note}".strip() if tx["notes"] else note
 	httpx.post(f"{BRIDGE}/notes", json={"id": tx["id"], "notes": notes}, timeout=60).raise_for_status()
+	forget(doc_id)
+	set_status(doc_id, "linked")
 
 
 # --- receipts still waiting for their bank transaction ---
@@ -159,12 +188,86 @@ def remember(doc_id, info):
 	state = _load()
 	state[str(doc_id)] = {**info, "added": datetime.date.today().isoformat()}
 	_save(state)
+	set_status(doc_id, "waiting")
 
 
 def forget(doc_id):
 	state = _load()
 	if state.pop(str(doc_id), None) is not None:
 		_save(state)
+
+
+# --- receipt log and the Homepage tile ---
+
+def _load_log():
+	try:
+		with open(LOG_PATH) as f:
+			return json.load(f)
+	except FileNotFoundError:
+		return {}
+
+
+def log_receipt(doc_id, info, status):
+	log = _load_log()
+	log[str(doc_id)] = {"added": datetime.datetime.now().isoformat(timespec="minutes"), "status": status,
+		**{k: (info or {}).get(k) for k in ("merchant", "date", "total")}}
+	_save_log(log)
+
+
+def set_status(doc_id, status):
+	log = _load_log()
+	if str(doc_id) in log:
+		log[str(doc_id)]["status"] = status
+		_save_log(log)
+
+
+def _save_log(log):
+	if len(log) > LOG_KEEP:
+		log = dict(sorted(log.items(), key=lambda kv: kv[1]["added"])[-LOG_KEEP:])
+	with open(LOG_PATH + ".tmp", "w") as f:
+		json.dump(log, f, ensure_ascii=False, indent=1)
+	os.replace(LOG_PATH + ".tmp", LOG_PATH)
+	try:
+		write_tile()
+	except Exception as e:
+		print(f"Receipts tile failed: {e}")
+
+
+STATUS_LABELS = {"linked": "in budget", "waiting": "waiting for bank", "duplicate": "duplicate",
+	"unread": "no amount found", "unmatched": "not in budget", "deleted": "deleted"}
+
+
+def write_tile():
+	import banksync
+	log = {k: v for k, v in _load_log().items() if v["status"] != "deleted"}
+	month = datetime.date.today().strftime("%Y-%m")
+	this_month = [v for v in log.values() if v["added"].startswith(month)]
+	linked = sum(v["status"] == "linked" for v in this_month)
+	waiting = [v for v in log.values() if v["status"] == "waiting"]
+	last = max(log.values(), key=lambda v: v["added"], default=None)
+	try:
+		with _paperless() as client:
+			documents = client.get("/api/documents/", params={"page_size": 1}, timeout=3).json()["count"]
+	except Exception:
+		documents = "?"
+	tile = {
+		"month": f"{len(this_month)} · {linked} in budget" if this_month else "none yet",
+		"waiting": ", ".join(_short(v) for v in waiting[:3]) + (f" +{len(waiting) - 3}" if len(waiting) > 3 else "") if waiting else "none",
+		"last": f"{_short(last)} · {STATUS_LABELS.get(last['status'], last['status'])}" if last else "–",
+		"documents": documents,
+		"bank_sync": banksync.describe(),
+		"updated": datetime.datetime.now().strftime("%d.%m %H:%M"),
+	}
+	with open(TILE_PATH + ".tmp", "w") as f:
+		json.dump(tile, f, ensure_ascii=False)
+	os.replace(TILE_PATH + ".tmp", TILE_PATH)
+
+
+def _short(entry):
+	parts = [entry.get("merchant") or "?"]
+	if entry.get("total"):
+		parts.append(_zl(entry["total"]))
+	return " ".join(parts)
 
 
 def pending():
@@ -202,3 +305,10 @@ def picker(doc_id, txs):
 	rows = [[InlineKeyboardButton(describe_tx(t)[:60], callback_data=f"rc:{doc_id}:{t['id']}")] for t in txs[:6]]
 	rows.append([InlineKeyboardButton("✖️ Żaden z nich", callback_data=f"rc:{doc_id}:none")])
 	return InlineKeyboardMarkup(rows)
+
+
+def duplicate_buttons(doc_id):
+	return InlineKeyboardMarkup([[
+		InlineKeyboardButton("🗑️ Usuń nowy", callback_data=f"rd:{doc_id}:del"),
+		InlineKeyboardButton("📚 Zostaw oba", callback_data=f"rd:{doc_id}:keep"),
+	]])

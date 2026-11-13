@@ -194,6 +194,28 @@
               label: Uncategorized (3 months)
             - field: updated
               label: Updated
+    - Receipts:
+        icon: mdi-receipt-text
+        href: https://homepi.tail04e168.ts.net:8444
+        description: Sent to Pandora, kept in Paperless, linked in Actual
+        widget:
+          type: customapi
+          url: http://localhost:3000/status/receipts.json
+          refreshInterval: 60000
+          display: list
+          mappings:
+            - field: month
+              label: This month
+            - field: waiting
+              label: Waiting for bank
+            - field: last
+              label: Last receipt
+            - field: documents
+              label: Documents in Paperless
+            - field: bank_sync
+              label: Bank sync
+            - field: updated
+              label: Updated
 
 - Monitoring:
     - CPU:

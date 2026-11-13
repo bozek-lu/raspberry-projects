@@ -12,6 +12,7 @@ import lotto
 import pandora
 import review
 import receipts
+import banksync
 import tempfile
 from zoneinfo import ZoneInfo
 
@@ -178,7 +179,18 @@ async def process_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, reply_to,
 		info = await asyncio.to_thread(receipts.extract, doc.get("content"))
 	except Exception as e:
 		logging.error(f"Receipt reading failed: {e}")
-		info = None
+		doc, info = {"id": doc_id}, None
+	receipts.log_receipt(doc_id, info, "unread")
+
+	# Exactly the same file sent before: Paperless keeps both, so ask what to do
+	earlier = receipts.duplicates(doc)
+	if earlier:
+		receipts.set_status(doc_id, "duplicate")
+		first = earlier[0]
+		await say(f"🔁 Ten sam plik już jest w Paperless: #{first['id']} {first.get('title', '')}\n{receipts.link(first['id'])}\nCo z nowym?",
+			reply_markup=receipts.duplicate_buttons(doc_id))
+		return
+
 	if not receipts.matchable(info):
 		await say(f"🗂️ Schowane w Paperless: {receipts.link(doc_id)}\nNie znalazłam kwoty i daty, więc nie szukam w budżecie.")
 		return
@@ -188,34 +200,90 @@ async def process_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, reply_to,
 		except Exception as e:
 			logging.error(f"Paperless rename failed: {e}")
 	await say(f"🗂️ {receipts.describe(info)}\n{receipts.link(doc_id)}")
-	await match_receipt(context, chat_id, doc_id, info, first_try=True)
+	await first_match(context, chat_id, doc_id, info)
 
-async def match_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, doc_id, info, first_try=False):
+async def first_match(context: ContextTypes.DEFAULT_TYPE, chat_id, doc_id, info):
+	# Nothing in the budget yet: ask the bank for fresh transactions (rate-limited), then look again
+	result = await match_receipt(context, chat_id, doc_id, info)
+	if result != "none":
+		return
+	ok, reason = banksync.allowed()
+	if not ok:
+		receipts.remember(doc_id, info)
+		await context.bot.send_message(chat_id, f"⏳ W budżecie jeszcze nie ma {receipts.describe(info)}. Nie pytam banku ({reason}). Sprawdzę rano.")
+		return
+	await context.bot.send_message(chat_id, f"🏦 W budżecie jeszcze nie ma {receipts.describe(info)}. Pytam bank o świeże wyciągi…")
+	synced = await asyncio.to_thread(banksync.run)
+	if synced:
+		result = await match_receipt(context, chat_id, doc_id, info)
+	if result == "none":
+		receipts.remember(doc_id, info)
+		why = "Bank jeszcze go nie pokazuje (płatności kartą wchodzą zwykle po 1–2 dniach)." if synced else "Bank nie odpowiedział."
+		await context.bot.send_message(chat_id, f"⏳ {why} Sprawdzę rano.")
+	if synced:
+		# The fresh transactions may also fit receipts that were already waiting
+		await retry_receipts(context, chat_id, skip=doc_id)
+
+async def match_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, doc_id, info):
+	"""Link the receipt if its spending is in Actual. Returns linked / choose / duplicate / none."""
 	try:
-		found = await asyncio.to_thread(receipts.candidates, info)
+		free, taken = await asyncio.to_thread(receipts.candidates, info)
 	except Exception as e:
 		logging.error(f"Receipt match failed: {e}")
-		found = None
-	if found and len(found) == 1:
-		await asyncio.to_thread(receipts.attach, doc_id, found[0])
-		receipts.forget(doc_id)
-		await context.bot.send_message(chat_id, f"🔗 Paragon {receipts.describe(info)} przypięty w budżecie do: {receipts.describe_tx(found[0])}")
-	elif found:
+		return "none"
+	if len(free) == 1:
+		await asyncio.to_thread(receipts.attach, doc_id, free[0])
+		await context.bot.send_message(chat_id, f"🔗 Paragon {receipts.describe(info)} przypięty w budżecie do: {receipts.describe_tx(free[0])}")
+		return "linked"
+	if free:
 		receipts.remember(doc_id, info)
 		await context.bot.send_message(chat_id, f"🤔 {receipts.describe(info)} pasuje do kilku wydatków. Który to?",
-			reply_markup=receipts.picker(doc_id, found))
-	elif first_try:
-		receipts.remember(doc_id, info)
-		await context.bot.send_message(chat_id, f"⏳ W budżecie jeszcze nie ma {receipts.describe(info)}. Bank się spóźnia, sprawdzę rano.")
+			reply_markup=receipts.picker(doc_id, free))
+		return "choose"
+	if taken:
+		# The only matching spending already has a receipt: most likely the same receipt again
+		receipts.forget(doc_id)
+		receipts.set_status(doc_id, "duplicate")
+		earlier = receipts.receipt_of(taken[0])
+		await context.bot.send_message(chat_id,
+			f"🔁 {receipts.describe(info)}: ten wydatek ({receipts.describe_tx(taken[0])}) ma już paragon #{earlier}\n{receipts.link(earlier)}\nTo chyba ten sam. Co z nowym?",
+			reply_markup=receipts.duplicate_buttons(doc_id), disable_web_page_preview=True)
+		return "duplicate"
+	return "none"
 
-async def retry_receipts(context: ContextTypes.DEFAULT_TYPE, chat_id):
+async def retry_receipts(context: ContextTypes.DEFAULT_TYPE, chat_id, skip=None):
 	for doc_id, info in receipts.pending().items():
+		if doc_id == skip:
+			continue
 		if receipts.expired(info):
 			receipts.forget(doc_id)
+			receipts.set_status(doc_id, "unmatched")
 			await context.bot.send_message(chat_id, f"🤷 Przez {receipts.RETRY_DAYS} dni nie znalazłam w budżecie {receipts.describe(info)}. Zostaje tylko w Paperless: {receipts.link(doc_id)}",
 				disable_web_page_preview=True)
 		else:
 			await match_receipt(context, chat_id, doc_id, info)
+	try:
+		await asyncio.to_thread(receipts.write_tile)
+	except Exception as e:
+		logging.error(f"Receipts tile failed: {e}")
+
+async def duplicate_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	query = update.callback_query
+	if not is_owner(update):
+		await query.answer(pandora.NO_ACCESS)
+		return
+	_, doc_id, action = query.data.split(":")
+	await query.answer()
+	if action == "del":
+		try:
+			await asyncio.to_thread(receipts.delete, int(doc_id))
+		except Exception as e:
+			logging.error(f"Paperless delete failed: {e}")
+			await query.edit_message_text("Nie udało się usunąć, Paperless się zaparł. Usuń ręcznie: " + receipts.link(doc_id))
+			return
+		await query.edit_message_text(f"🗑️ Usunęłam nowy #{doc_id}. Leży w koszu Paperless przez 30 dni, gdybyś żałował.")
+	else:
+		await query.edit_message_text(f"📚 Zostawiam oba. Nowy to #{doc_id}.")
 
 async def receipt_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	query = update.callback_query
@@ -231,13 +299,12 @@ async def receipt_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	if tx_id == "none":
 		await query.edit_message_text(f"{receipts.describe(info)}: dobra, poszukam jeszcze rano.")
 		return
-	found = await asyncio.to_thread(receipts.candidates, info)
-	tx = next((t for t in found if t["id"] == tx_id), None)
+	free, _ = await asyncio.to_thread(receipts.candidates, info)
+	tx = next((t for t in free if t["id"] == tx_id), None)
 	if not tx:
 		await query.edit_message_text("Tego wydatku już nie widzę albo ma już paragon.")
 		return
 	await asyncio.to_thread(receipts.attach, int(doc_id), tx)
-	receipts.forget(doc_id)
 	await query.edit_message_text(f"🔗 Paragon {receipts.describe(info)} przypięty do: {receipts.describe_tx(tx)}")
 
 async def send_review(context: ContextTypes.DEFAULT_TYPE, chat_id, when_empty=None):
@@ -438,6 +505,7 @@ if __name__ == '__main__':
 	application.add_handler(CommandHandler('lotto', lotto_command))
 	application.add_handler(CallbackQueryHandler(review_button, pattern=r"^rv:"))
 	application.add_handler(CallbackQueryHandler(receipt_button, pattern=r"^rc:"))
+	application.add_handler(CallbackQueryHandler(duplicate_button, pattern=r"^rd:"))
 	application.add_handler(CallbackQueryHandler(photo_button, pattern=r"^ph:"))
 	application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, photo_or_document))
 	application.job_queue.run_daily(send_morning, time=datetime.time(7, 30, tzinfo=ZoneInfo("Europe/Warsaw")))
