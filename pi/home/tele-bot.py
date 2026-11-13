@@ -84,10 +84,20 @@ def photo_choice(message_id):
 		InlineKeyboardButton("🐱 Pandorka", callback_data=f"ph:cat:{message_id}"),
 	]])
 
+# Telegram's default 5 s is too short for fetching photos from a Pi now and then
+FILE_TIMEOUT = 60
+
+async def download(context: ContextTypes.DEFAULT_TYPE, file_id, path):
+	file = await context.bot.get_file(file_id, read_timeout=FILE_TIMEOUT)
+	await file.download_to_drive(path, read_timeout=FILE_TIMEOUT)
+
 async def save_cat_photo(context: ContextTypes.DEFAULT_TYPE, file_id):
 	name = datetime.datetime.now().strftime("pandorka-%Y%m%d-%H%M%S.jpg")
-	file = await context.bot.get_file(file_id)
-	await file.download_to_drive(os.path.join(pandora.PHOTO_DIR, name))
+	try:
+		await download(context, file_id, os.path.join(pandora.PHOTO_DIR, name))
+	except Exception as e:
+		logging.error(f"Saving cat photo failed: {e}")
+		return "Telegram nie oddał mi zdjęcia. Wyślij je jeszcze raz."
 	return random.choice(pandora.PHOTO_SAVED)
 
 async def photo_or_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,7 +113,7 @@ async def photo_or_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 		if first_word in CAT_CAPTIONS or first_word.startswith(("🐱", "🐈")):
 			await message.reply_text(await save_cat_photo(context, file_id), reply_to_message_id=message.message_id)
 		elif caption:
-			await start_receipt(context, message, await message.photo[-1].get_file(), f"paragon-{datetime.date.today().isoformat()}.jpg", caption)
+			await start_receipt(context, message, file_id, f"paragon-{datetime.date.today().isoformat()}.jpg", caption)
 		else:
 			context.chat_data.setdefault("photos", {})[str(message.message_id)] = file_id
 			await message.reply_text("📷 Co to jest?", reply_markup=photo_choice(message.message_id), reply_to_message_id=message.message_id)
@@ -115,12 +125,18 @@ async def photo_or_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	if doc.file_size and doc.file_size > 20 * 1024 * 1024:
 		await message.reply_text("Za ciężkie, Telegram pozwala mi unieść najwyżej 20 MB.")
 		return
-	await start_receipt(context, message, await doc.get_file(), doc.file_name or "dokument", message.caption)
+	await start_receipt(context, message, doc.file_id, doc.file_name or "dokument", message.caption)
 
-async def start_receipt(context: ContextTypes.DEFAULT_TYPE, message, file, name, title):
+async def start_receipt(context: ContextTypes.DEFAULT_TYPE, message, file_id, name, title):
 	fd, path = tempfile.mkstemp(suffix=os.path.splitext(name)[1])
 	os.close(fd)
-	await file.download_to_drive(path)
+	try:
+		await download(context, file_id, path)
+	except Exception as e:
+		logging.error(f"Receipt download failed: {e}")
+		os.remove(path)
+		await message.reply_text("❌ Telegram nie oddał mi pliku. Wyślij go jeszcze raz.", reply_to_message_id=message.message_id)
+		return
 	await message.reply_text("📥 Mam! Paperless czyta, to potrwa minutę albo dwie.", reply_to_message_id=message.message_id)
 	context.application.create_task(process_receipt(context, message.chat_id, message.message_id, path, name, title))
 
@@ -139,7 +155,7 @@ async def photo_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 		await query.edit_message_text(await save_cat_photo(context, file_id))
 	else:
 		await query.edit_message_text("🧾 Paragon, biorę.")
-		await start_receipt(context, query.message.reply_to_message or query.message, await context.bot.get_file(file_id),
+		await start_receipt(context, query.message.reply_to_message or query.message, file_id,
 			f"paragon-{datetime.date.today().isoformat()}.jpg", None)
 
 async def process_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, reply_to, path, name, title):

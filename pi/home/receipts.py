@@ -62,15 +62,23 @@ def upload(path, filename, title=None):
 
 def wait_for_document(task_id):
 	"""Wait for OCR to finish. Returns (document id, None) or (None, error text)."""
+	# Works with both task APIs: v2 (plain list, "SUCCESS", related_document)
+	# and v3 (paginated, "success", related_document_ids, result_data)
 	deadline = time.time() + OCR_TIMEOUT
 	with _paperless() as client:
 		while time.time() < deadline:
-			tasks = client.get("/api/tasks/", params={"task_id": task_id}).raise_for_status().json()
+			data = client.get("/api/tasks/", params={"task_id": task_id}).raise_for_status().json()
+			tasks = data.get("results", []) if isinstance(data, dict) else data
 			task = tasks[0] if tasks else {}
-			if task.get("status") == "SUCCESS" and task.get("related_document"):
-				return int(task["related_document"]), None
-			if task.get("status") in ("FAILURE", "REVOKED"):
-				return None, (task.get("result") or "nieznany błąd")[:300]
+			status = (task.get("status") or "").upper()
+			doc_ids = task.get("related_document_ids") or ([task["related_document"]] if task.get("related_document") else [])
+			if status == "SUCCESS" and doc_ids:
+				return int(doc_ids[0]), None
+			if status in ("FAILURE", "REVOKED"):
+				error = task.get("result") or task.get("result_data") or "nieznany błąd"
+				if isinstance(error, dict):
+					error = error.get("error") or error.get("message") or json.dumps(error, ensure_ascii=False)
+				return None, str(error)[:300]
 			time.sleep(5)
 	return None, "Paperless nie skończył w 15 minut"
 
