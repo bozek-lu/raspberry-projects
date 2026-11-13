@@ -294,6 +294,12 @@
         description: Passwords (works with Bitwarden apps)
         server: local
         container: vaultwarden
+    - Paperless:
+        icon: paperless-ngx.png
+        href: https://homepi.tail04e168.ts.net:8444
+        description: Receipts and documents (send them to Pandora)
+        server: local
+        container: paperless
     - Uptime Kuma:
         icon: uptime-kuma.png
         href: http://homepi.tail04e168.ts.net:3001

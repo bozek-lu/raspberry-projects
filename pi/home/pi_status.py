@@ -29,6 +29,7 @@ def links():
 		"Home Assistant": f"{url}:8123",
 		"AdGuard Home": f"{url}:3000",
 		"Portainer": f"{url}:9000",
+		"Paperless": f"{url.replace('http://', 'https://')}:8444",
 	}
 
 

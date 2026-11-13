@@ -11,6 +11,8 @@ import bot_stats
 import lotto
 import pandora
 import review
+import receipts
+import tempfile
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -71,6 +73,113 @@ async def send_morning(context: ContextTypes.DEFAULT_TYPE):
 		with open(pandora.random_photo(), "rb") as photo:
 			await context.bot.send_photo(owner, photo)
 	await send_review(context, owner)
+	await retry_receipts(context, owner)
+
+async def receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	# Photos and PDFs from the owner go to Paperless; other people's pictures are ignored as before
+	if not is_owner(update):
+		return
+	message = update.message
+	if message.photo:
+		file = await message.photo[-1].get_file()
+		name = f"paragon-{datetime.date.today().isoformat()}.jpg"
+	else:
+		doc = message.document
+		if not (doc.mime_type == "application/pdf" or (doc.mime_type or "").startswith("image/")):
+			await message.reply_text("Biorę tylko zdjęcia i PDF-y. Resztę zrzucam ze stołu.")
+			return
+		if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+			await message.reply_text("Za ciężkie, Telegram pozwala mi unieść najwyżej 20 MB.")
+			return
+		file = await doc.get_file()
+		name = doc.file_name or "dokument"
+	fd, path = tempfile.mkstemp(suffix=os.path.splitext(name)[1])
+	os.close(fd)
+	await file.download_to_drive(path)
+	await message.reply_text("📥 Mam! Paperless czyta, to potrwa minutę albo dwie.", reply_to_message_id=message.message_id)
+	context.application.create_task(process_receipt(context, message.chat_id, message.message_id, path, name, message.caption))
+
+async def process_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, reply_to, path, name, title):
+	async def say(text, **kwargs):
+		await context.bot.send_message(chat_id, text, reply_to_message_id=reply_to, disable_web_page_preview=True, **kwargs)
+	try:
+		task_id = await asyncio.to_thread(receipts.upload, path, name, title)
+		doc_id, error = await asyncio.to_thread(receipts.wait_for_document, task_id)
+	except Exception as e:
+		logging.error(f"Paperless upload failed: {e}")
+		await say("❌ Nie mogę dosięgnąć Paperless. Ktoś zamknął drzwi?")
+		return
+	finally:
+		os.remove(path)
+	if error:
+		await say(f"❌ Paperless go nie przyjął: {error}")
+		return
+	try:
+		doc = await asyncio.to_thread(receipts.document, doc_id)
+		info = await asyncio.to_thread(receipts.extract, doc.get("content"))
+	except Exception as e:
+		logging.error(f"Receipt reading failed: {e}")
+		info = None
+	if not receipts.matchable(info):
+		await say(f"🗂️ Schowane w Paperless: {receipts.link(doc_id)}\nNie znalazłam kwoty i daty, więc nie szukam w budżecie.")
+		return
+	if not title:
+		try:
+			await asyncio.to_thread(receipts.rename, doc_id, info)
+		except Exception as e:
+			logging.error(f"Paperless rename failed: {e}")
+	await say(f"🗂️ {receipts.describe(info)}\n{receipts.link(doc_id)}")
+	await match_receipt(context, chat_id, doc_id, info, first_try=True)
+
+async def match_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, doc_id, info, first_try=False):
+	try:
+		found = await asyncio.to_thread(receipts.candidates, info)
+	except Exception as e:
+		logging.error(f"Receipt match failed: {e}")
+		found = None
+	if found and len(found) == 1:
+		await asyncio.to_thread(receipts.attach, doc_id, found[0])
+		receipts.forget(doc_id)
+		await context.bot.send_message(chat_id, f"🔗 Paragon {receipts.describe(info)} przypięty w budżecie do: {receipts.describe_tx(found[0])}")
+	elif found:
+		receipts.remember(doc_id, info)
+		await context.bot.send_message(chat_id, f"🤔 {receipts.describe(info)} pasuje do kilku wydatków. Który to?",
+			reply_markup=receipts.picker(doc_id, found))
+	elif first_try:
+		receipts.remember(doc_id, info)
+		await context.bot.send_message(chat_id, f"⏳ W budżecie jeszcze nie ma {receipts.describe(info)}. Bank się spóźnia, sprawdzę rano.")
+
+async def retry_receipts(context: ContextTypes.DEFAULT_TYPE, chat_id):
+	for doc_id, info in receipts.pending().items():
+		if receipts.expired(info):
+			receipts.forget(doc_id)
+			await context.bot.send_message(chat_id, f"🤷 Przez {receipts.RETRY_DAYS} dni nie znalazłam w budżecie {receipts.describe(info)}. Zostaje tylko w Paperless: {receipts.link(doc_id)}",
+				disable_web_page_preview=True)
+		else:
+			await match_receipt(context, chat_id, doc_id, info)
+
+async def receipt_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	query = update.callback_query
+	if not is_owner(update):
+		await query.answer(pandora.NO_ACCESS)
+		return
+	_, doc_id, tx_id = query.data.split(":", 2)
+	await query.answer()
+	info = receipts.pending_info(doc_id)
+	if not info:
+		await query.edit_message_text("Ten paragon już załatwiony.")
+		return
+	if tx_id == "none":
+		await query.edit_message_text(f"{receipts.describe(info)}: dobra, poszukam jeszcze rano.")
+		return
+	found = await asyncio.to_thread(receipts.candidates, info)
+	tx = next((t for t in found if t["id"] == tx_id), None)
+	if not tx:
+		await query.edit_message_text("Tego wydatku już nie widzę albo ma już paragon.")
+		return
+	await asyncio.to_thread(receipts.attach, int(doc_id), tx)
+	receipts.forget(doc_id)
+	await query.edit_message_text(f"🔗 Paragon {receipts.describe(info)} przypięty do: {receipts.describe_tx(tx)}")
 
 async def send_review(context: ContextTypes.DEFAULT_TYPE, chat_id, when_empty=None):
 	try:
@@ -212,6 +321,7 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			"/reminders – lista przypomnień\n"
 			"/morning – poranna wiadomość teraz\n"
 			"/review – sprawdź kategorie ostatnich wydatków\n"
+			"zdjęcie albo PDF paragonu – do Paperless i do budżetu (najczytelniej wysłane jako plik, podpis = tytuł)\n"
 			"/lotto – ostatnie losowanie (dodaj 1 2 3 4 5 6 – twoje liczby, usuń – zapomnij je)"
 		)
 	await update.message.reply_text(text)
@@ -267,6 +377,8 @@ if __name__ == '__main__':
 	application.add_handler(CommandHandler('review', review_now))
 	application.add_handler(CommandHandler('lotto', lotto_command))
 	application.add_handler(CallbackQueryHandler(review_button, pattern=r"^rv:"))
+	application.add_handler(CallbackQueryHandler(receipt_button, pattern=r"^rc:"))
+	application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, receipt))
 	application.job_queue.run_daily(send_morning, time=datetime.time(7, 30, tzinfo=ZoneInfo("Europe/Warsaw")))
 	application.add_handler(CallbackQueryHandler(access_decision, pattern=r"^(accept|reject|remove):\d+$"))
 	application.add_handler(CommandHandler('dashboard', dashboard))

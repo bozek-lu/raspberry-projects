@@ -38,6 +38,7 @@ snap() { [ -f "$1" ] && sqlite3 "$1" ".backup '$STAGE/db/$2'"; }
 snap /home/lbx/server/vaultwarden/data/db.sqlite3 vaultwarden.sqlite3
 snap /home/lbx/server/uptime-kuma/data/kuma.db uptime-kuma.db
 snap /home/lbx/homeassistant/home-assistant_v2.db home-assistant_v2.db
+snap /home/lbx/server/paperless/data/db.sqlite3 paperless.sqlite3
 
 # 2. System bits that live outside /home
 crontab -l -u lbx > "$STAGE/crontab-lbx.txt" 2>/dev/null || true

@@ -7,6 +7,8 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 | `pi/home/` | Mirror of tracked files in `/home/lbx` on the Pi: Pandora Telegram bot, dashboard helpers, compose files, Homepage config, Home Assistant YAML |
 | `pi/home/backup/` | Nightly restic backup to Google Drive (see `restore.md`) |
 | `pi/home/server/diun/` | Telegram alerts when container images have updates |
+| `pi/home/server/paperless/` | Paperless-ngx for receipts and documents (tailnet only, `:8444`); one-time `setup.sh` |
+| `pi/home/receipts.py` | Photos/PDFs sent to Pandora go to Paperless and get linked to the matching Actual transaction |
 | `pi/sync-filter.txt` | What gets synced; secrets and data are excluded |
 | `claude-usage-push/` | Mac launchd job pushing Claude usage to the Pi |
 

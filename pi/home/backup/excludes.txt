@@ -13,6 +13,8 @@
 /home/lbx/homeassistant-backup-*.tgz
 /home/lbx/server/actual/bank-sync/cache
 /home/lbx/server/actual/bank-sync/cache-bridge
+/home/lbx/server/paperless/redis
+/home/lbx/server/paperless/data/index
 node_modules
 __pycache__
 *.log
@@ -21,3 +23,4 @@ __pycache__
 /home/lbx/server/vaultwarden/data/db.sqlite3*
 /home/lbx/server/uptime-kuma/data/kuma.db*
 /home/lbx/homeassistant/home-assistant_v2.db*
+/home/lbx/server/paperless/data/db.sqlite3*

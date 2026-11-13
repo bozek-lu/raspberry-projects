@@ -1,0 +1,37 @@
+services:
+  paperless-redis:
+    container_name: paperless-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ./redis:/data
+
+  paperless:
+    container_name: paperless
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    restart: unless-stopped
+    depends_on:
+      - paperless-redis
+    # Only reachable through tailscale serve (HTTPS on :8444); Pandora uses 127.0.0.1:8010
+    ports:
+      - "127.0.0.1:8010:8000"
+    # PAPERLESS_SECRET_KEY, created by setup.sh
+    env_file: .env
+    environment:
+      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_URL: https://homepi.tail04e168.ts.net:8444
+      PAPERLESS_ALLOWED_HOSTS: homepi.tail04e168.ts.net,127.0.0.1,localhost
+      PAPERLESS_TIME_ZONE: Europe/Warsaw
+      PAPERLESS_OCR_LANGUAGE: pol+eng
+      PAPERLESS_OCR_LANGUAGES: pol
+      # Gentle on the Pi: one document at a time
+      PAPERLESS_TASK_WORKERS: 1
+      PAPERLESS_THREADS_PER_WORKER: 2
+      PAPERLESS_WEBSERVER_WORKERS: 1
+      USERMAP_UID: 1000
+      USERMAP_GID: 1000
+    volumes:
+      - ./data:/usr/src/paperless/data
+      - ./media:/usr/src/paperless/media
+      - ./export:/usr/src/paperless/export
+      - ./consume:/usr/src/paperless/consume

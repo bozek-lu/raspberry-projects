@@ -57,6 +57,8 @@
 + /server/homepage/config/*.js
 + /server/diun/
 + /server/diun/env.example
++ /server/paperless/
++ /server/paperless/setup.sh
 + /homeassistant/
 + /homeassistant/*.yaml
 + /homeassistant/compose.yaml

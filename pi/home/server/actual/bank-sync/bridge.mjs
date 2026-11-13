@@ -1,4 +1,4 @@
-// Small local API over Actual Budget for the Telegram bot's daily spending review.
+// Small local API over Actual Budget for the Telegram bot: daily spending review and receipt matching.
 // Keeps the budget open so button presses answer quickly. Listens on 127.0.0.1 only.
 import { createServer } from "node:http";
 import * as api from "@actual-app/api";
@@ -47,6 +47,32 @@ async function categorize({ id, category_id, payee_id, remember }) {
 	return { ok: true };
 }
 
+// Receipts from Paperless: spending of exactly this amount (grosze) on any open account,
+// from a day before the receipt date to a week after (card payments post late)
+async function match(amount, date) {
+	const day = new Date(`${date}T12:00:00`);
+	const from = ymd(new Date(day.getTime() - 86400000));
+	const to = ymd(new Date(day.getTime() + 7 * 86400000));
+	const payees = Object.fromEntries((await api.getPayees()).map(p => [p.id, p.name]));
+	const found = [];
+	for (const account of await api.getAccounts()) {
+		if (account.closed) continue;
+		for (const t of await api.getTransactions(account.id, from, to))
+			if (t.amount === -amount && !t.is_child)
+				found.push({
+					id: t.id, date: t.date, payee: payees[t.payee] ?? t.imported_payee ?? "?",
+					amount_zl: amount / 100, account: account.name, notes: t.notes ?? "",
+				});
+	}
+	return { transactions: found };
+}
+
+async function setNotes({ id, notes }) {
+	await api.updateTransaction(id, { notes });
+	await api.sync();
+	return { ok: true };
+}
+
 createServer(async (req, res) => {
 	try {
 		await api.sync();
@@ -56,6 +82,8 @@ createServer(async (req, res) => {
 		let result;
 		if (req.method === "GET" && url.pathname === "/review") result = await review(Number(url.searchParams.get("days") ?? 7));
 		else if (req.method === "POST" && url.pathname === "/categorize") result = await categorize(JSON.parse(body));
+		else if (req.method === "GET" && url.pathname === "/match") result = await match(Number(url.searchParams.get("amount")), url.searchParams.get("date"));
+		else if (req.method === "POST" && url.pathname === "/notes") result = await setNotes(JSON.parse(body));
 		else { res.writeHead(404).end(); return; }
 		res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(result));
 	} catch (e) {
