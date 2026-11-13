@@ -75,29 +75,72 @@ async def send_morning(context: ContextTypes.DEFAULT_TYPE):
 	await send_review(context, owner)
 	await retry_receipts(context, owner)
 
-async def receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	# Photos and PDFs from the owner go to Paperless; other people's pictures are ignored as before
+# Caption that sends a photo straight to Pandora's album instead of Paperless
+CAT_CAPTIONS = ("kot", "pandora", "pandorka", "🐱", "🐈")
+
+def photo_choice(message_id):
+	return InlineKeyboardMarkup([[
+		InlineKeyboardButton("🧾 Paragon", callback_data=f"ph:doc:{message_id}"),
+		InlineKeyboardButton("🐱 Pandorka", callback_data=f"ph:cat:{message_id}"),
+	]])
+
+async def save_cat_photo(context: ContextTypes.DEFAULT_TYPE, file_id):
+	name = datetime.datetime.now().strftime("pandorka-%Y%m%d-%H%M%S.jpg")
+	file = await context.bot.get_file(file_id)
+	await file.download_to_drive(os.path.join(pandora.PHOTO_DIR, name))
+	return random.choice(pandora.PHOTO_SAVED)
+
+async def photo_or_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	# Owner only; other people's pictures are ignored as before.
+	# Files and PDFs go to Paperless. Photos: the caption decides, or Pandora asks.
 	if not is_owner(update):
 		return
 	message = update.message
 	if message.photo:
-		file = await message.photo[-1].get_file()
-		name = f"paragon-{datetime.date.today().isoformat()}.jpg"
-	else:
-		doc = message.document
-		if not (doc.mime_type == "application/pdf" or (doc.mime_type or "").startswith("image/")):
-			await message.reply_text("Biorę tylko zdjęcia i PDF-y. Resztę zrzucam ze stołu.")
-			return
-		if doc.file_size and doc.file_size > 20 * 1024 * 1024:
-			await message.reply_text("Za ciężkie, Telegram pozwala mi unieść najwyżej 20 MB.")
-			return
-		file = await doc.get_file()
-		name = doc.file_name or "dokument"
+		file_id = message.photo[-1].file_id
+		caption = (message.caption or "").strip()
+		first_word = caption.lower().split()[0] if caption else ""
+		if first_word in CAT_CAPTIONS or first_word.startswith(("🐱", "🐈")):
+			await message.reply_text(await save_cat_photo(context, file_id), reply_to_message_id=message.message_id)
+		elif caption:
+			await start_receipt(context, message, await message.photo[-1].get_file(), f"paragon-{datetime.date.today().isoformat()}.jpg", caption)
+		else:
+			context.chat_data.setdefault("photos", {})[str(message.message_id)] = file_id
+			await message.reply_text("📷 Co to jest?", reply_markup=photo_choice(message.message_id), reply_to_message_id=message.message_id)
+		return
+	doc = message.document
+	if not (doc.mime_type == "application/pdf" or (doc.mime_type or "").startswith("image/")):
+		await message.reply_text("Biorę tylko zdjęcia i PDF-y. Resztę zrzucam ze stołu.")
+		return
+	if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+		await message.reply_text("Za ciężkie, Telegram pozwala mi unieść najwyżej 20 MB.")
+		return
+	await start_receipt(context, message, await doc.get_file(), doc.file_name or "dokument", message.caption)
+
+async def start_receipt(context: ContextTypes.DEFAULT_TYPE, message, file, name, title):
 	fd, path = tempfile.mkstemp(suffix=os.path.splitext(name)[1])
 	os.close(fd)
 	await file.download_to_drive(path)
 	await message.reply_text("📥 Mam! Paperless czyta, to potrwa minutę albo dwie.", reply_to_message_id=message.message_id)
-	context.application.create_task(process_receipt(context, message.chat_id, message.message_id, path, name, message.caption))
+	context.application.create_task(process_receipt(context, message.chat_id, message.message_id, path, name, title))
+
+async def photo_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	query = update.callback_query
+	if not is_owner(update):
+		await query.answer(pandora.NO_ACCESS)
+		return
+	_, kind, message_id = query.data.split(":")
+	await query.answer()
+	file_id = context.chat_data.get("photos", {}).pop(message_id, None)
+	if not file_id:
+		await query.edit_message_text("Zgubiłam to zdjęcie (pewnie po drzemce). Wyślij je jeszcze raz.")
+		return
+	if kind == "cat":
+		await query.edit_message_text(await save_cat_photo(context, file_id))
+	else:
+		await query.edit_message_text("🧾 Paragon, biorę.")
+		await start_receipt(context, query.message.reply_to_message or query.message, await context.bot.get_file(file_id),
+			f"paragon-{datetime.date.today().isoformat()}.jpg", None)
 
 async def process_receipt(context: ContextTypes.DEFAULT_TYPE, chat_id, reply_to, path, name, title):
 	async def say(text, **kwargs):
@@ -321,7 +364,8 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			"/reminders – lista przypomnień\n"
 			"/morning – poranna wiadomość teraz\n"
 			"/review – sprawdź kategorie ostatnich wydatków\n"
-			"zdjęcie albo PDF paragonu – do Paperless i do budżetu (najczytelniej wysłane jako plik, podpis = tytuł)\n"
+			"zdjęcie – zapytam: 🧾 paragon czy 🐱 do albumu (podpis „kot” = od razu do albumu, inny podpis = paragon z tym tytułem)\n"
+			"plik albo PDF – prosto do Paperless i do budżetu (najczytelniejsze paragony)\n"
 			"/lotto – ostatnie losowanie (dodaj 1 2 3 4 5 6 – twoje liczby, usuń – zapomnij je)"
 		)
 	await update.message.reply_text(text)
@@ -378,7 +422,8 @@ if __name__ == '__main__':
 	application.add_handler(CommandHandler('lotto', lotto_command))
 	application.add_handler(CallbackQueryHandler(review_button, pattern=r"^rv:"))
 	application.add_handler(CallbackQueryHandler(receipt_button, pattern=r"^rc:"))
-	application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, receipt))
+	application.add_handler(CallbackQueryHandler(photo_button, pattern=r"^ph:"))
+	application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, photo_or_document))
 	application.job_queue.run_daily(send_morning, time=datetime.time(7, 30, tzinfo=ZoneInfo("Europe/Warsaw")))
 	application.add_handler(CallbackQueryHandler(access_decision, pattern=r"^(accept|reject|remove):\d+$"))
 	application.add_handler(CommandHandler('dashboard', dashboard))

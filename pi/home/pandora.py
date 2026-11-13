@@ -49,5 +49,15 @@ def greeting():
 	return random.choice(GREETINGS)
 
 
+PHOTO_DIR = "/home/lbx/pandorka"
+
+PHOTO_SAVED = [
+	"🐱 Do albumu. Wyszłam pięknie, jak zawsze.",
+	"🐱 Schowane. Ten kąt to mój lepszy profil.",
+	"🐱 Zapisane. Mogłeś mnie obudzić delikatniej.",
+	"🐱 Mrrr. Kolejne arcydzieło w kolekcji.",
+]
+
+
 def random_photo():
-	return random.choice(glob("/home/lbx/pandorka/*"))
+	return random.choice(glob(f"{PHOTO_DIR}/*"))
