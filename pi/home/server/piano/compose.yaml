@@ -1,0 +1,31 @@
+# Piano tutor songs. Pandora turns YouTube links into MIDI with the transcriber (run on demand),
+# and the Tab5 tutor downloads them from the song server on the LAN: http://homepi.local:8095/songs.json
+services:
+  songs:
+    container_name: piano-songs
+    image: python:3.11-slim
+    restart: unless-stopped
+    command: ["python", "-m", "http.server", "8095", "--directory", "/songs"]
+    volumes:
+      - ./songs:/songs:ro
+    ports:
+      - "8095:8095"
+
+  # Not started by `up`; Pandora runs: docker compose run --rm transcriber fetch|convert|register|add-midi|drop ...
+  # (see transcribe.py). Audio waiting for conversion lives in ./queue.
+  transcriber:
+    build: .
+    image: piano-transcriber
+    profiles: ["tools"]
+    # Run as lbx so songs and models stay editable on the Pi; caches go to /tmp
+    user: "1000:1000"
+    environment:
+      HOME: /tmp
+      NUMBA_CACHE_DIR: /tmp
+      TZ: Europe/Warsaw
+    volumes:
+      - ./songs:/songs
+      - ./queue:/queue
+      - ./models:/tmp/piano_transcription_inference_data
+    # Leave a core for Home Assistant and the rest
+    cpus: 3

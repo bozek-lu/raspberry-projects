@@ -13,6 +13,7 @@ import pandora
 import review
 import receipts
 import banksync
+import piano
 import tempfile
 from zoneinfo import ZoneInfo
 
@@ -120,11 +121,16 @@ async def photo_or_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			await message.reply_text("📷 Co to jest?", reply_markup=photo_choice(message.message_id), reply_to_message_id=message.message_id)
 		return
 	doc = message.document
-	if not (doc.mime_type == "application/pdf" or (doc.mime_type or "").startswith("image/")):
-		await message.reply_text("Biorę tylko zdjęcia i PDF-y. Resztę zrzucam ze stołu.")
-		return
 	if doc.file_size and doc.file_size > 20 * 1024 * 1024:
 		await message.reply_text("Za ciężkie, Telegram pozwala mi unieść najwyżej 20 MB.")
+		return
+	# MIDI files go to the keyboard's songs, audio files to the piano queue
+	kind = piano.kind_of(doc.file_name, doc.mime_type)
+	if kind:
+		await piano_file(context, message, doc.file_id, doc.file_name, kind, ".mid" if kind == "midi" else ".mp3")
+		return
+	if not (doc.mime_type == "application/pdf" or (doc.mime_type or "").startswith("image/")):
+		await message.reply_text("Biorę zdjęcia i PDF-y (paragony) oraz MIDI i pliki audio (keyboard). Resztę zrzucam ze stołu.")
 		return
 	await start_receipt(context, message, doc.file_id, doc.file_name or "dokument", message.caption)
 
@@ -307,6 +313,159 @@ async def receipt_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	await asyncio.to_thread(receipts.attach, int(doc_id), tx)
 	await query.edit_message_text(f"🔗 Paragon {receipts.describe(info)} przypięty do: {receipts.describe_tx(tx)}")
 
+# --- Piano songs for the keyboard (EZ-310 + Tab5) ---
+# One conversion at a time: each one keeps three Pi cores busy
+PIANO_LOCK = asyncio.Lock()
+PC_HINT = "Na komputerze (repo raspberry-projects): python tools/piano-convert.py"
+
+def piano_choice(entry):
+	qid, seconds = entry["id"], entry.get("seconds")
+	return InlineKeyboardMarkup([
+		[InlineKeyboardButton(f"⚡ Szybko tutaj (~{piano.estimate(seconds, True)} min, mniej dokładnie)", callback_data=f"pn:fast:{qid}")],
+		[InlineKeyboardButton(f"🎯 Dokładnie tutaj (~{piano.estimate(seconds, False)} min)", callback_data=f"pn:acc:{qid}")],
+		[InlineKeyboardButton("💻 Na komputerze", callback_data=f"pn:pc:{qid}"),
+		 InlineKeyboardButton("🗑️ Usuń", callback_data=f"pn:del:{qid}")],
+	])
+
+async def youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	message = update.message
+	await message.reply_text("📥 Pobieram dźwięk…", reply_to_message_id=message.message_id)
+	context.application.create_task(fetch_and_ask(context, message.chat_id, message.message_id,
+		piano.fetch_link, piano.find_link(message.text)))
+
+async def fetch_and_ask(context: ContextTypes.DEFAULT_TYPE, chat_id, reply_to, fetch, *args):
+	"""Put the audio in the queue, then ask where to turn it into notes."""
+	try:
+		entry = await asyncio.to_thread(fetch, *args)
+	except Exception as e:
+		logging.error(f"Piano fetch failed: {e}")
+		entry = {"ok": False, "error": str(e)}
+	if not entry.get("ok"):
+		await context.bot.send_message(chat_id, f"❌ Nie wyszło: {entry.get('error')}", reply_to_message_id=reply_to)
+		return
+	await context.bot.send_message(chat_id, f"🎵 {piano.describe(entry)} czeka w kolejce. Jak spisać nuty?",
+		reply_markup=piano_choice(entry), reply_to_message_id=reply_to)
+
+async def piano_file(context: ContextTypes.DEFAULT_TYPE, message, file_id, file_name, kind, default_ext):
+	"""A MIDI file goes to the songs; an audio file goes to the queue."""
+	path = piano.incoming_path(file_name, default_ext)
+	try:
+		await download(context, file_id, path)
+	except Exception as e:
+		logging.error(f"Piano file download failed: {e}")
+		await message.reply_text("❌ Telegram nie oddał mi pliku. Wyślij go jeszcze raz.", reply_to_message_id=message.message_id)
+		return
+	title = (message.caption or "").strip() or os.path.splitext(file_name or "")[0] or "piosenka"
+	if kind == "midi":
+		result = await asyncio.to_thread(piano.add_midi, path, title)
+		if result.get("ok"):
+			channels = ", ".join(map(str, result.get("channels", []))) or "brak"
+			await message.reply_text(f"🎹 Dodane do piosenek: {piano.describe(result)}\nKanały z nutami: {channels} "
+				"(światła EZ-310: 1 = prawa ręka, 2 = lewa).", reply_to_message_id=message.message_id)
+		else:
+			await message.reply_text(f"❌ Nie wyszło: {result.get('error')}", reply_to_message_id=message.message_id)
+		return
+	await message.reply_text("📥 Mam, wkładam do kolejki…", reply_to_message_id=message.message_id)
+	context.application.create_task(fetch_and_ask(context, message.chat_id, message.message_id, piano.fetch_file, path, title))
+
+async def audio_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	message = update.message
+	audio = message.audio or message.voice
+	name = getattr(audio, "file_name", None) or (f"{audio.title}.ogg" if getattr(audio, "title", None) else None)
+	if audio.file_size and audio.file_size > 20 * 1024 * 1024:
+		await message.reply_text("Za ciężkie, Telegram pozwala mi unieść najwyżej 20 MB. Wyślij link do YouTube.")
+		return
+	await piano_file(context, message, audio.file_id, name, "audio", ".ogg")
+
+async def piano_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	query = update.callback_query
+	if not is_owner(update):
+		await query.answer(pandora.NO_ACCESS)
+		return
+	_, action, qid = query.data.split(":", 2)
+	await query.answer()
+	entry = next((e for e in piano.queue() if e["id"] == qid), None)
+	if not entry:
+		await query.edit_message_text("Tego już nie ma w kolejce (pewnie gotowe albo usunięte). /piano pokaże piosenki.")
+		return
+	if action == "del":
+		await asyncio.to_thread(piano.drop, qid)
+		await query.edit_message_text(f"🗑️ Usunięte z kolejki: {piano.describe(entry)}")
+	elif action == "pc":
+		await query.edit_message_text(f"💻 {piano.describe(entry)} zostaje w kolejce.\n{PC_HINT}\nDam znać, kiedy nuty wrócą.")
+	else:
+		fast = action == "fast"
+		waiting = " Najpierw kończę poprzednią." if PIANO_LOCK.locked() else ""
+		await query.edit_message_text(f"⏳ Spisuję nuty: {piano.describe(entry)}, "
+			f"{'szybko' if fast else 'dokładnie'}, ~{piano.estimate(entry.get('seconds'), fast)} min.{waiting}")
+		context.application.create_task(convert_and_send(context, query.message.chat_id, query.message.message_id, entry, fast))
+
+async def convert_and_send(context: ContextTypes.DEFAULT_TYPE, chat_id, reply_to, entry, fast):
+	async with PIANO_LOCK:
+		try:
+			result = await asyncio.to_thread(piano.convert, entry["id"], fast)
+		except Exception as e:
+			logging.error(f"Piano conversion failed: {e}")
+			result = {"ok": False, "error": str(e)}
+	if not result.get("ok"):
+		await context.bot.send_message(chat_id, f"❌ Nie wyszło: {result.get('error')}\nPlik zostaje w kolejce (/piano kolejka).",
+			reply_to_message_id=reply_to)
+		return
+	context.bot_data.setdefault("piano_seen", set()).add(song_key(result))
+	await send_song(context, chat_id, result, reply_to)
+
+def song_key(song):
+	# A song converted again (e.g. accurate on a computer after a fast draft) keeps its file name
+	return f"{song['file']}@{song.get('added')}"
+
+async def send_song(context: ContextTypes.DEFAULT_TYPE, chat_id, song, reply_to=None):
+	draft = "\n⚡ Szybka wersja: mogą być pomyłki, dokładną zrobisz na komputerze." if song.get("source") == "pi-fast" else ""
+	caption = (f"🎹 {piano.describe(song)}\n"
+		f"Prawa ręka na kanale 1, lewa na 2 (światła EZ-310). Tab5 znajdzie ją na liście piosenek.{draft}")
+	try:
+		with open(piano.song_path(song), "rb") as f:
+			await context.bot.send_document(chat_id, f, filename=song["file"], caption=caption,
+				reply_to_message_id=reply_to, write_timeout=FILE_TIMEOUT)
+	except Exception as e:
+		logging.error(f"Sending MIDI failed: {e}")
+		await context.bot.send_message(chat_id, caption + f"\n(plik: {piano.SONGS_URL}/{song['file']})", reply_to_message_id=reply_to)
+
+async def announce_new_songs(context: ContextTypes.DEFAULT_TYPE):
+	"""Songs converted on a computer (tools/piano-convert.py) appear in songs.json: send them over."""
+	seen = context.bot_data.get("piano_seen")
+	current = piano.songs()
+	if seen is None:
+		context.bot_data["piano_seen"] = {song_key(s) for s in current}
+		return
+	for song in current:
+		if song_key(song) not in seen:
+			seen.add(song_key(song))
+			if song.get("source") == "computer":
+				await send_song(context, os.getenv("TELEGRAM_OWNER_ID"), song)
+
+async def piano_songs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	if not is_owner(update):
+		await update.message.reply_text(pandora.NO_ACCESS)
+		return
+	if context.args and context.args[0].lower() in ("kolejka", "queue", "k"):
+		waiting = piano.queue()
+		if not waiting:
+			await update.message.reply_text("Kolejka pusta. Wyślij link do YouTube albo plik audio.")
+			return
+		await update.message.reply_text(f"⏳ W kolejce do spisania nut: {len(waiting)}\n{PC_HINT}")
+		for entry in waiting:
+			await update.message.reply_text(f"🎵 {piano.describe(entry)}", reply_markup=piano_choice(entry))
+		return
+	songs = piano.songs()
+	if not songs:
+		await update.message.reply_text("Jeszcze żadnych piosenek. Wyślij mi link do YouTube, plik audio albo MIDI.")
+		return
+	lines = [f"• {piano.describe(s)}" for s in songs[-15:]]
+	queued = len(piano.queue())
+	tail = f"\n\nW kolejce: {queued} (/piano kolejka)" if queued else ""
+	await update.message.reply_text("🎹 Piosenki dla keyboardu:\n" + "\n".join(lines) + tail + f"\n\n{piano.SONGS_URL}/songs.json",
+		disable_web_page_preview=True)
+
 async def send_review(context: ContextTypes.DEFAULT_TYPE, chat_id, when_empty=None):
 	try:
 		cats, items = await asyncio.to_thread(review.pending)
@@ -449,7 +608,10 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			"/review – sprawdź kategorie ostatnich wydatków\n"
 			"zdjęcie – zapytam: 🧾 paragon czy 🐱 do albumu (podpis „kot” = od razu do albumu, inny podpis = paragon z tym tytułem)\n"
 			"plik albo PDF – prosto do Paperless i do budżetu (najczytelniejsze paragony)\n"
-			"/lotto – ostatnie losowanie (dodaj 1 2 3 4 5 6 – twoje liczby, usuń – zapomnij je)"
+			"/lotto – ostatnie losowanie (dodaj 1 2 3 4 5 6 – twoje liczby, usuń – zapomnij je)\n"
+			"link do YouTube albo plik audio – pobiorę do kolejki i spiszę nuty (MIDI) dla keyboardu: szybko, dokładnie albo na komputerze\n"
+			"plik MIDI – od razu do piosenek dla keyboardu\n"
+			"/piano – lista piosenek, /piano kolejka – co czeka na spisanie nut"
 		)
 	await update.message.reply_text(text)
 
@@ -512,6 +674,13 @@ if __name__ == '__main__':
 	application.add_handler(CallbackQueryHandler(access_decision, pattern=r"^(accept|reject|remove):\d+$"))
 	application.add_handler(CommandHandler('dashboard', dashboard))
 	application.add_handler(CommandHandler('status', status))
+	application.add_handler(CommandHandler('piano', piano_songs))
+	# Owner's YouTube links go to the piano transcriber instead of the chat
+	owner_filter = filters.User(user_id=int(os.getenv("TELEGRAM_OWNER_ID")))
+	application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & owner_filter & filters.Regex(piano.YOUTUBE_RE), youtube_link))
+	application.add_handler(MessageHandler((filters.AUDIO | filters.VOICE) & owner_filter, audio_message))
+	application.add_handler(CallbackQueryHandler(piano_button, pattern=r"^pn:"))
+	application.job_queue.run_repeating(announce_new_songs, interval=60, first=5)
 	application.add_handler(echo_handler)
 
 	application.run_polling()

@@ -59,6 +59,9 @@
 + /server/diun/env.example
 + /server/paperless/
 + /server/paperless/setup.sh
++ /server/piano/
++ /server/piano/Dockerfile
++ /server/piano/*.py
 + /homeassistant/
 + /homeassistant/*.yaml
 + /homeassistant/compose.yaml
