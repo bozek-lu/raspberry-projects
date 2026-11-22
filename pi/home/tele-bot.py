@@ -29,6 +29,8 @@ logging.basicConfig(
 )
 # httpx logs request URLs, which contain the bot token
 logging.getLogger("httpx").setLevel(logging.WARNING)
+# The scheduler logs every run of the once-a-minute piano song check
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 TELEGRAM_API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
 
 
