@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import logging
 import os
 import random
@@ -318,7 +319,17 @@ async def receipt_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Piano songs for the keyboard (EZ-310 + Tab5) ---
 # One conversion at a time: each one keeps three Pi cores busy
 PIANO_LOCK = asyncio.Lock()
-PC_HINT = "Na komputerze (repo raspberry-projects): python tools/piano-convert.py"
+# Where the computer converter lives (HTML: tap a command in Telegram to copy it)
+PC_HINT = (
+	"💻 <b>Nuty na komputerze</b>: skrypt <code>tools/piano-convert.py</code> w repo raspberry-projects.\n\n"
+	"<b>Mac</b>\n"
+	"<code>cd ~/raspberry-projects &amp;&amp; git pull &amp;&amp; python3 tools/piano-convert.py</code>\n"
+	"Pierwszy raz (pobiera repo):\n"
+	"<code>git clone https://github.com/bozek-lu/raspberry-projects.git ~/raspberry-projects</code>\n\n"
+	"<b>Windows</b> (PowerShell)\n"
+	"<code>cd ~\\claude\\raspberry-projects; git pull; python tools\\piano-convert.py</code>\n\n"
+	"Pierwsze uruchomienie instaluje ok. 1 GB (torch) i pobiera model. Potrzebny Python 3.10+ i ssh do mnie. "
+	"Gotowe nuty sama ci wyślę.")
 
 def piano_choice(entry):
 	qid, seconds = entry["id"], entry.get("seconds")
@@ -394,7 +405,8 @@ async def piano_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 		await asyncio.to_thread(piano.drop, qid)
 		await query.edit_message_text(f"🗑️ Usunięte z kolejki: {piano.describe(entry)}")
 	elif action == "pc":
-		await query.edit_message_text(f"💻 {piano.describe(entry)} zostaje w kolejce.\n{PC_HINT}\nDam znać, kiedy nuty wrócą.")
+		await query.edit_message_text(f"⏳ {html.escape(piano.describe(entry))} zostaje w kolejce.\n\n{PC_HINT}",
+			parse_mode="HTML", disable_web_page_preview=True)
 	else:
 		fast = action == "fast"
 		waiting = " Najpierw kończę poprzednią." if PIANO_LOCK.locked() else ""
@@ -449,12 +461,16 @@ async def piano_songs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	if not is_owner(update):
 		await update.message.reply_text(pandora.NO_ACCESS)
 		return
+	if context.args and context.args[0].lower() in ("komputer", "pc", "mac"):
+		await update.message.reply_text(PC_HINT, parse_mode="HTML", disable_web_page_preview=True)
+		return
 	if context.args and context.args[0].lower() in ("kolejka", "queue", "k"):
 		waiting = piano.queue()
 		if not waiting:
 			await update.message.reply_text("Kolejka pusta. Wyślij link do YouTube albo plik audio.")
 			return
-		await update.message.reply_text(f"⏳ W kolejce do spisania nut: {len(waiting)}\n{PC_HINT}")
+		await update.message.reply_text(f"⏳ W kolejce do spisania nut: {len(waiting)}\n\n{PC_HINT}",
+			parse_mode="HTML", disable_web_page_preview=True)
 		for entry in waiting:
 			await update.message.reply_text(f"🎵 {piano.describe(entry)}", reply_markup=piano_choice(entry))
 		return
@@ -613,7 +629,7 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			"/lotto – ostatnie losowanie (dodaj 1 2 3 4 5 6 – twoje liczby, usuń – zapomnij je)\n"
 			"link do YouTube albo plik audio – pobiorę do kolejki i spiszę nuty (MIDI) dla keyboardu: szybko, dokładnie albo na komputerze\n"
 			"plik MIDI – od razu do piosenek dla keyboardu\n"
-			"/piano – lista piosenek, /piano kolejka – co czeka na spisanie nut"
+			"/piano – lista piosenek, /piano kolejka – co czeka na spisanie nut, /piano komputer – jak spisać nuty na komputerze"
 		)
 	await update.message.reply_text(text)
 
