@@ -1,10 +1,16 @@
 // One-off: categorizes past transactions, adds rules for future bank syncs,
 // and builds a report dashboard per account. Dry run unless APPLY=1.
 import * as api from "@actual-app/api";
+import { existsSync, readFileSync } from "node:fs";
 
 const { ACTUAL_PASSWORD, ACTUAL_SYNC_ID, APPLY } = process.env;
 
-const ACCOUNT_NAMES = { "REDACTED": "mBank Personal", "REDACTED": "mBank Business (FDD)" };
+// Personal names (account holders, family, people paid directly) stay on the Pi, not in git:
+// organize.local.json = {"accounts": {"BANK ACCOUNT NAME": "Actual account name"},
+//                        "patterns": {"Category": ["EXTRA PATTERN", ...]}}  (see organize.local.example.json)
+const LOCAL_FILE = new URL("./organize.local.json", import.meta.url);
+const LOCAL = existsSync(LOCAL_FILE) ? JSON.parse(readFileSync(LOCAL_FILE, "utf8")) : { accounts: {}, patterns: {} };
+const ACCOUNT_NAMES = LOCAL.accounts ?? {};
 
 // [group, category, payee/description patterns (case-insensitive substrings)]
 const CATEGORIES = [
@@ -13,16 +19,16 @@ const CATEGORIES = [
 	["Everyday", "Transport", ["BOLT.EU", "UBER *TRIP", "KOLEO", "PLK "]],
 	["Everyday", "Pets", ["ZOOPLUS", "WETERYNARYJNY"]],
 	["Everyday", "Health & insurance", ["UNIQA", "GENERALI", "UBEZP. NA WYPADEK"]],
-	["Home", "Housing fees", ["REDACTED"]],
+	["Home", "Housing fees", []],
 	["Home", "Energy, internet & phone", ["GKPGE", "T-MOBILE", "DERKOM"]],
-	["Home", "Home & repairs", ["CASTORAMA", "BRICOMARCHE", "OSLONAOKNA", "REDACTED"]],
+	["Home", "Home & repairs", ["CASTORAMA", "BRICOMARCHE", "OSLONAOKNA"]],
 	["Lifestyle", "Shopping", ["ALLEGRO", "AMAZON.PL", "X-KOM", "MEDIAEXPERT", "TEMU", "ZALANDO", "DECATHLON", "MILITARIA", "PAYU S.A.", "WAPER", "INPOST", "POCZTA POLSKA", "PUBLIO", "IMPAR", "MPL SERVICES"]],
 	["Lifestyle", "Subscriptions", ["NETFLIX", "APPLE.COM/BILL", "ANTHROPIC", "T3 CHAT", "MUBI", "AMAZON PRIME"]],
 	["Lifestyle", "Games & fun", ["WARGAMING", "STEAMPOWERED", "GAMEFORGE", "CRAZYTIME"]],
 	["Lifestyle", "Lottery", ["LOTTO"]],
 	["Lifestyle", "Travel", ["RYANAIR", "BOOKING", "AIRPORT HOTEL", "FLIXBUS", "BALTONA"]],
 	["Lifestyle", "Gifts & charity", ["UNICEF", "POCZTAKWIATOWA"]],
-	["People", "Family & friends", ["REDACTED", "REDACTED", "REDACTED", "REDACTED", "REDACTED", "REDACTED", "REDACTED", "REDACTED", "MARCIN", "MAMA", "REDACTED"]],
+	["People", "Family & friends", []],
 	["Business & taxes", "ZUS", ["ZAKŁAD UBEZPIECZEŃ SPOŁECZNYCH"]],
 	["Business & taxes", "Taxes", ["URZĄD SKARBOWY", "RATUSZ"]],
 	["Business & taxes", "Accountant", ["KSIEGOWNIK"]],
@@ -30,10 +36,11 @@ const CATEGORIES = [
 	["Money moves", "Cash withdrawals", ["WYPŁATA ATM"]],
 	["Money moves", "Revolut", ["REVOLUT"]],
 	// Last, so payments that only mention my name in the notes (e.g. housing fees) match first
-	["Money moves", "Between my accounts", ["REDACTED"]],
+	["Money moves", "Between my accounts", []],
 	["Income", "Business income", ["UZNANIE NATYCH. TRANSAKCJA WALUT"]],
 	["Income", "Brokerage withdrawals", [" W BM "]],
 ];
+for (const [, name, pats] of CATEGORIES) pats.push(...(LOCAL.patterns?.[name] ?? []));
 
 // Card payments get a new payee per order number; merge them into one payee
 const PAYEE_GROUPS = {

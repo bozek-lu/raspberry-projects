@@ -1,0 +1,9 @@
+{
+  "accounts": { "JAN KOWALSKI": "mBank Personal", "JAN KOWALSKI FIRMA": "mBank Business" },
+  "patterns": {
+    "Family & friends": ["ANNA KOWALSKA", "MAMA"],
+    "Housing fees": ["HOUSING ASSOCIATION NAME"],
+    "Home & repairs": ["CONTRACTOR NAME"],
+    "Between my accounts": ["JAN KOWALSKI"]
+  }
+}

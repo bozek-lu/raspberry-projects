@@ -10,6 +10,7 @@ rclone.conf
 *.pem
 *.key
 restic-password
+organize.local.json
 
 # Data and noise
 __pycache__/
