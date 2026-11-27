@@ -1,0 +1,19 @@
+# Piano tutor page + API on :8096 (server.py). Install / update:
+#   sudo install -m 644 ~/server/piano/tutor/piano-tutor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now piano-tutor
+# After editing server.py: sudo systemctl restart piano-tutor (index.html needs only a page reload)
+[Unit]
+Description=Piano tutor (tablet page, practice stats, song library)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=lbx
+WorkingDirectory=/home/lbx
+ExecStart=/usr/bin/python3 /home/lbx/server/piano/tutor/server.py
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
-# Piano tutor songs and the tablet tutor page. Pandora turns YouTube links into MIDI with the transcriber (run on demand),
+# Piano tutor songs. Pandora turns YouTube links into MIDI with the transcriber (run on demand),
 # and the Tab5 tutor downloads them from the song server on the LAN: http://homepi.local:8095/songs.json
+# The tablet tutor page (:8096) is not a container: tutor/server.py runs as piano-tutor.service.
 services:
   songs:
     container_name: piano-songs
@@ -10,25 +11,6 @@ services:
       - ./songs:/songs:ro
     ports:
       - "8095:8095"
-
-  # Tutor page for the tablet: http://homepi.local:8096 on the LAN, https://homepi.tail04e168.ts.net:8445
-  # on the tailnet (tailscale serve). The keyboard plugs into the tablet and the page drives it with
-  # Web MIDI (iPad: open it in the "Web MIDI Browser" app). Symlinks so updated files show up at once.
-  tutor:
-    container_name: piano-tutor
-    image: python:3.11-slim
-    restart: unless-stopped
-    user: "1000:1000"
-    command:
-      - sh
-      - -c
-      - mkdir -p /tmp/www && ln -sf /tutor/index.html /tmp/www/index.html && ln -sfn /songs /tmp/www/songs
-        && exec python -m http.server 8096 --directory /tmp/www
-    volumes:
-      - ./tutor:/tutor:ro
-      - ./songs:/songs:ro
-    ports:
-      - "8096:8096"
 
   # Not started by `up`; Pandora runs: docker compose run --rm transcriber fetch|convert|register|add-midi|drop ...
   # (see transcribe.py). Audio waiting for conversion lives in ./queue.

@@ -47,12 +47,13 @@ else
 fi
 
 # 4. Restart only what the change affects
-RESTART_BOT=0; RELOAD_UNITS=0; COMPOSE_DIRS=(); HA_CONFIG=0
+RESTART_BOT=0; RELOAD_UNITS=0; COMPOSE_DIRS=(); HA_CONFIG=0; RESTART_TUTOR=0
 while read -r f; do
 	case "$f" in
 		*/compose.yaml) COMPOSE_DIRS+=("$(dirname "$f")") ;;
 		backup/homepi-backup.service|backup/homepi-backup.timer) RELOAD_UNITS=1 ;;
 		homeassistant/*.yaml) HA_CONFIG=1 ;;
+		server/piano/tutor/server.py|server/piano/tutor/piano-tutor.service) RESTART_TUTOR=1 ;;
 		*/*) ;;
 		*.py) RESTART_BOT=1 ;;
 	esac
@@ -69,6 +70,10 @@ done
 if [ "$RELOAD_UNITS" = 1 ]; then
 	echo "Reloading backup timer..."
 	ssh "$PI" 'sudo install -m 644 ~/backup/homepi-backup.service ~/backup/homepi-backup.timer /etc/systemd/system/ && sudo systemctl daemon-reload'
+fi
+if [ "$RESTART_TUTOR" = 1 ]; then
+	echo "Restarting the piano tutor..."
+	ssh "$PI" 'sudo install -m 644 ~/server/piano/tutor/piano-tutor.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now piano-tutor && sudo systemctl restart piano-tutor'
 fi
 [ "$HA_CONFIG" = 1 ] && echo "Home Assistant YAML changed: reload it in HA (Developer tools > YAML) or restart the container."
 

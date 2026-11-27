@@ -1,11 +1,11 @@
 <!doctype html>
 <!--
-  Piano tutor for the Yamaha EZ-310, served by the Pi (piano-tutor container) and run on a tablet.
+  Piano tutor for the Yamaha EZ-310, served by homepi (server.py, piano-tutor.service) and run on a tablet.
   The keyboard plugs into the tablet over USB; this page talks to it with Web MIDI:
   it reads key presses and lights keys by sending notes on the EZ-310 light channels
   (Function 042/043, defaults 1 = right hand, 2 = left hand).
   iPad Safari has no Web MIDI: open the page in the free "Web MIDI Browser" app instead.
-  Songs come from songs/songs.json (Pandora's song folder).
+  Songs come from songs/songs.json (Pandora's song folder); practice sessions go to /api/session.
 -->
 <html lang="en">
 <head>
@@ -17,7 +17,7 @@
 <style>
 :root {
 	--bg: #14161a; --panel: #1e2128; --line: #2f3440; --button: #2a2e37; --text: #e8eaed; --dim: #9aa0a6;
-	--right: #4c9bff; --left: #ffa53d; --good: #3ddc84; --bad: #ff5a5a;
+	--right: #4c9bff; --left: #ffa53d; --good: #3ddc84; --bad: #ff5a5a; --loop: rgba(255, 214, 10, .35);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
@@ -26,22 +26,21 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 body { display: flex; flex-direction: column;
 	padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 header, footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); }
-select, button { font: inherit; color: var(--text); background: var(--button); border: 1px solid var(--line);
+select, button, input { font: inherit; color: var(--text); background: var(--button); border: 1px solid var(--line);
 	border-radius: 10px; min-height: 44px; padding: 0 14px; }
-button { cursor: pointer; }
+input { -webkit-user-select: text; user-select: text; }
+button { cursor: pointer; white-space: nowrap; }
 button:active { filter: brightness(1.35); }
 button:disabled { opacity: .45; }
-#song { flex: 1 1 220px; max-width: 360px; }
+button.primary { background: var(--right); border-color: var(--right); color: #fff; }
+#song { flex: 1 1 200px; max-width: 340px; min-width: 0; }
 .seg { display: flex; }
 .seg button { border-radius: 0; margin-left: -1px; }
 .seg button:first-child { border-radius: 10px 0 0 10px; margin-left: 0; }
 .seg button:last-child { border-radius: 0 10px 10px 0; }
 .seg button.on { background: var(--right); border-color: var(--right); color: #fff; }
-.tog.on { background: #3b4352; border-color: var(--dim); }
-.tog::before { content: "○ "; color: var(--dim); }
-.tog.on::before { content: "● "; color: var(--good); }
 #tempo { min-width: 64px; opacity: 1; }
-#status { margin-left: auto; display: flex; gap: 8px; align-items: center; color: var(--dim); max-width: 340px; }
+#status { margin-left: auto; display: flex; gap: 8px; align-items: center; color: var(--dim); max-width: 320px; }
 #dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
 #dot.ok { background: var(--good); }
 main { flex: 1; position: relative; min-height: 0; }
@@ -51,17 +50,64 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 	font-size: 20px; text-align: center; pointer-events: none; }
 #banner small { display: block; margin-top: 8px; font-size: 15px; color: var(--dim); }
 #banner:empty { display: none; }
-#play { min-width: 76px; font-size: 20px; background: var(--right); border-color: var(--right); color: #fff; }
+#toast { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: var(--good); color: #062; font-weight: 600;
+	border-radius: 12px; padding: 10px 18px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+#toast.show { opacity: 1; }
+#play { min-width: 76px; font-size: 20px; }
 #bar { flex: 1 1 200px; height: 44px; position: relative; display: flex; align-items: center; cursor: pointer; }
 #bar::before { content: ""; position: absolute; left: 0; right: 0; height: 6px; background: var(--button); border-radius: 3px; }
+#loopband { position: absolute; height: 22px; background: var(--loop); border-radius: 4px; display: none; }
 #fill { position: absolute; left: 0; height: 6px; width: 0; background: var(--right); border-radius: 3px; }
+#loopA.on, #loopB.on { background: #5c4d00; border-color: #ffd60a; color: #ffd60a; }
 #time, #stats { color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 #stats b { color: var(--good); font-weight: 600; }
 #stats i { color: var(--bad); font-style: normal; font-weight: 600; }
+
+/* settings menu */
+#menu { position: absolute; right: 12px; top: 8px; z-index: 5; background: var(--panel); border: 1px solid var(--line);
+	border-radius: 14px; padding: 8px; display: none; flex-direction: column; gap: 6px; min-width: 260px;
+	box-shadow: 0 12px 40px rgba(0, 0, 0, .5); }
+#menu.open { display: flex; }
+.tog { text-align: left; }
+.tog::before { content: "○  "; color: var(--dim); }
+.tog.on { background: #3b4352; border-color: var(--dim); }
+.tog.on::before { content: "●  "; color: var(--good); }
+.tog small { display: block; color: var(--dim); font-size: 12px; margin: -2px 0 6px 22px; white-space: normal; }
+
+/* song library drawer */
+#lib { position: fixed; inset: 0; z-index: 10; display: none; background: rgba(0, 0, 0, .5); }
+#lib.open { display: block; }
+#libpanel { position: absolute; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: var(--panel);
+	border-left: 1px solid var(--line); overflow-y: auto; -webkit-overflow-scrolling: touch;
+	padding: calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 16px) 24px 16px; }
+#libpanel h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 22px 0 10px; }
+#libpanel h2:first-of-type { margin-top: 6px; }
+.libhead { display: flex; align-items: center; justify-content: space-between; }
+.libhead h1 { font-size: 22px; margin: 0; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tile { background: var(--button); border-radius: 12px; padding: 10px 12px; }
+.tile b { display: block; font-size: 20px; margin-top: 2px; }
+.tile span { color: var(--dim); font-size: 13px; }
+#days { display: flex; gap: 3px; align-items: flex-end; height: 48px; margin-top: 10px; }
+#days div { flex: 1; background: var(--right); border-radius: 2px; min-height: 2px; opacity: .85; }
+#days div.zero { background: var(--line); }
+#dayslabel { display: flex; justify-content: space-between; color: var(--dim); font-size: 12px; margin-top: 4px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row input[type=url], .row input[type=text] { flex: 1 1 220px; min-width: 0; }
+.hint { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
+.item { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.item .what { flex: 1; min-width: 0; }
+.item .what div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .what small { color: var(--dim); }
+.item button { min-height: 40px; padding: 0 12px; }
+.item.current .what div:first-child { color: var(--right); }
+.err { color: var(--bad); }
+input[type=file] { display: none; }
 </style>
 </head>
 <body>
 <header>
+	<button id="libbtn" aria-label="Songs and stats">☰ Songs</button>
 	<select id="song" aria-label="Song"><option value="">Loading songs…</option></select>
 	<div class="seg" id="hands" aria-label="Hands">
 		<button data-v="L">Left</button><button data-v="B">Both</button><button data-v="R">Right</button>
@@ -72,31 +118,84 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 	<div class="seg" aria-label="Tempo">
 		<button id="slower" aria-label="Slower">−</button><button id="tempo" disabled>100%</button><button id="faster" aria-label="Faster">+</button>
 	</div>
-	<button class="tog" id="sound" title="Let the lit notes sound too">Guide sound</button>
-	<button class="tog" id="other" title="Play the hand you are not practising">Other hand</button>
+	<button id="menubtn" aria-label="Options">⚙</button>
 	<select id="dev" aria-label="MIDI device" hidden></select>
 	<div id="status"><span id="dot"></span><span id="device">Starting…</span></div>
 </header>
-<main><canvas id="cv"></canvas><div id="banner"></div></main>
+<main>
+	<canvas id="cv"></canvas>
+	<div id="banner"></div>
+	<div id="toast"></div>
+	<div id="menu">
+		<button class="tog" id="sound">Guide sound<small>Lit notes sound too (otherwise only light)</small></button>
+		<button class="tog" id="other">Other hand<small>Plays the hand you are not practising</small></button>
+		<button class="tog" id="countin">Count-in<small>4 clicks before Play along starts</small></button>
+		<button class="tog" id="speedup">Speed up<small>Play along: +5% tempo after a run with 90% right, up to 100%</small></button>
+		<button id="test">Test lights</button>
+	</div>
+</main>
 <footer>
 	<button id="restart" aria-label="Back to start">⏮</button>
-	<button id="play" aria-label="Play or pause">▶</button>
-	<div id="bar"><div id="fill"></div></div>
+	<button id="play" class="primary" aria-label="Play or pause">▶</button>
+	<div class="seg" aria-label="Repeat a part">
+		<button id="loopA" title="Repeat from here">A</button><button id="loopB" title="Repeat up to here">B</button><button id="loopX" title="Stop repeating">✕</button>
+	</div>
+	<div id="bar"><div id="loopband"></div><div id="fill"></div></div>
 	<span id="time">0:00 / 0:00</span>
 	<span id="stats"></span>
-	<button id="test" title="Light a scale on the keyboard">Test lights</button>
 </footer>
+
+<div id="lib">
+	<div id="libpanel">
+		<div class="libhead"><h1>Songs</h1><button id="libclose" aria-label="Close">✕</button></div>
+		<h2>Practice</h2>
+		<div class="tiles">
+			<div class="tile"><span>Today</span><b id="stToday">–</b></div>
+			<div class="tile"><span>This week</span><b id="stWeek">–</b></div>
+			<div class="tile"><span>Streak</span><b id="stStreak">–</b></div>
+		</div>
+		<div id="days"></div>
+		<div id="dayslabel"><span>4 weeks ago</span><span>today</span></div>
+
+		<h2>Add a song</h2>
+		<div class="row">
+			<input type="url" id="addUrl" placeholder="YouTube link" autocomplete="off" autocapitalize="off">
+			<select id="addHow" aria-label="Conversion">
+				<option value="fast">Fast (≈ song length)</option>
+				<option value="accurate">Accurate (≈ 20× length)</option>
+				<option value="">Decide later</option>
+			</select>
+			<button id="addGo" class="primary">Add</button>
+		</div>
+		<div class="row" style="margin-top:8px">
+			<button id="uploadBtn">Upload a MIDI or audio file…</button>
+			<input type="file" id="upload" accept=".mid,.midi,.kar,audio/*,.mp3,.m4a,.wav,.ogg,.flac">
+		</div>
+		<p class="hint" id="addMsg">MIDI files are added right away. Audio and YouTube are turned into notes on the Pi
+			(or with tools/piano-convert.py on a computer). Pandora on Telegram does the same.</p>
+
+		<h2 id="queueHead">Waiting for notes</h2>
+		<div id="queue"></div>
+
+		<h2>Library</h2>
+		<div id="library"></div>
+	</div>
+</div>
+
 <script>
 "use strict";
 const LOW = 36, HIGH = 96;        // EZ-310: 61 keys, C2..C7
 const RIGHT = 0, LEFT = 1;        // hand index == MIDI channel index of its light part
 const OTHER_CH = 2;               // channel 3: the other hand, sounding but not lit
+const DRUM_CH = 9;                // channel 10: count-in clicks
 const HANDS = { R: [RIGHT], L: [LEFT], B: [RIGHT, LEFT] };
 const CHORD_GAP = 0.06;           // wait mode: onsets closer than this (s) are one step
 const HIT_WINDOW = 0.3;           // play mode: a press this close (real s) to a note is a hit
 const ECHO_GUARD = 20;            // ms: ignore a "press" of a key we lit this recently (MIDI echo)
 const LOOKAHEAD = 0.06;           // s: play mode schedules notes this far ahead (timestamped)
 const WINDOW = 3.5;               // song seconds visible above the keyboard
+const IDLE = 20000;               // ms without a key press before wait-mode time stops counting
+const SPEEDUP_AT = 0.9, SPEEDUP_STEP = 0.05;
 const $ = id => document.getElementById(id);
 
 const store = {
@@ -106,12 +205,22 @@ const store = {
 	},
 	set(key, value) { try { localStorage.setItem("tutor." + key, JSON.stringify(value)); } catch { } },
 };
-const settings = Object.assign({ hands: "B", mode: "wait", tempo: 1, sound: false, other: true }, store.get("settings", {}));
+const settings = Object.assign({ hands: "B", mode: "wait", tempo: 1, sound: false, other: true, countin: true, speedup: false },
+	store.get("settings", {}));
 
 const lowerBound = (a, x) => { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; };
 const upperBound = (a, x) => { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] <= x) lo = m + 1; else hi = m; } return lo; };
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clock = s => { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function api(path, body) {
+	const res = await fetch(path, body === undefined ? { cache: "no-store" } :
+		{ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data.ok === false) throw new Error(data.error || "HTTP " + res.status);
+	return data;
+}
 
 // ---------------------------------------------------------------- MIDI file -> notes
 
@@ -201,9 +310,11 @@ function buildSong({ div, tracks }) {
 		notes.push({ t, d: Math.max(end - t, 0.05), n, h: hand(r), v: Math.max(1, r.vel) });
 	}
 	notes.sort((a, b) => a.t - b.t || a.n - b.n);
+	const firstTempo = (tempos.find(([tick]) => tick <= (raw[0]?.start ?? 0)) || tempos[0] || [0, 500000])[1];
 	return {
 		notes, starts: notes.map(x => x.t), longest: notes.reduce((m, x) => Math.max(m, x.d), 0),
 		duration: notes.reduce((m, x) => Math.max(m, x.t + x.d), 0),
+		beat: Math.min(1.5, Math.max(0.3, firstTempo / 1e6)),   // seconds per beat, for the count-in
 	};
 }
 
@@ -276,13 +387,17 @@ function send(data, at) {
 const E = {
 	song: null, playing: false, done: false,
 	t: 0,            // song position; while playing in play mode, the position at E.anchor
-	anchor: 0,       // performance.now() matching E.t while playing in play mode
+	anchor: 0,       // performance.now() matching E.t while playing in play mode (later during a count-in)
 	steps: [], stepTimes: [], step: 0, struck: new Set(),
 	events: [], evTimes: [], ev: 0,
 	targets: [], targetTimes: [], hit: new Set(),
 	others: [], otherTimes: [], timers: [],
 	lit: new Set(), litAt: {},
+	loop: null,      // { a, b } song seconds; b is null until set
+	passFrom: 0, pass: { good: 0, bad: 0 },
 	stats: { good: 0, bad: 0 },
+	sess: null,      // practice session being recorded
+	lastKey: 0,
 	pressed: new Map(),  // note -> true (right) / false (wrong) / null (not judged)
 };
 
@@ -308,7 +423,7 @@ function allOff() {
 	for (const ch of [RIGHT, LEFT, OTHER_CH]) { send([0xb0 | ch, 123, 0]); send([0xb0 | ch, 123, 0], later); }
 }
 
-// Piano on all three channels; the lit (guide) channels are muted unless "Guide sound" is on
+// Piano on the three note channels; the lit (guide) channels are muted unless "Guide sound" is on
 function setupSound() {
 	for (const ch of [RIGHT, LEFT, OTHER_CH]) send([0xc0 | ch, 0]);
 	for (const ch of [RIGHT, LEFT]) send([0xb0 | ch, 7, settings.sound ? 100 : 0]);
@@ -342,6 +457,7 @@ function prepare() {
 }
 
 const nowT = () => E.playing && settings.mode === "play" ? E.t + (performance.now() - E.anchor) / 1000 * settings.tempo : E.t;
+const loopEnd = () => E.loop && E.loop.b !== null ? E.loop.b : Infinity;
 
 function position(t) {
 	const duration = E.song ? E.song.duration : 0;
@@ -350,23 +466,41 @@ function position(t) {
 	if (settings.mode === "wait" && E.step < E.steps.length) t = E.steps[E.step].t;
 	E.t = t;
 	E.struck.clear();
+	E.hit.clear();
 	E.done = false;
-	if (t === 0) { E.stats = { good: 0, bad: 0 }; E.hit.clear(); }
+	if (t === 0) E.stats = { good: 0, bad: 0 };
 }
 
 function play() {
 	if (!E.song || E.playing) return;
-	if (E.done || E.t >= E.song.duration || (settings.mode === "wait" && E.step >= E.steps.length)) position(0);
+	const loopOn = E.loop && E.loop.b !== null;
+	if (loopOn && (E.t < E.loop.a - 0.01 || E.t >= E.loop.b)) position(E.loop.a);
+	else if (E.done || E.t >= E.song.duration || (settings.mode === "wait" && E.step >= E.steps.length)) position(0);
 	E.done = false;
 	E.playing = true;
+	E.passFrom = E.t;
+	E.pass = { good: 0, bad: 0 };
+	if (!E.sess) E.sess = { seconds: 0, good: 0, bad: 0, completed: false, loop: false };
 	if (settings.mode === "wait") lightStep();
-	else { E.anchor = performance.now(); E.ev = lowerBound(E.evTimes, E.t); }
+	else {
+		E.anchor = performance.now();
+		if (settings.countin) {
+			const beat = E.song.beat / settings.tempo * 1000;
+			E.anchor += 4 * beat;
+			for (let i = 0; i < 4; i++) {
+				const at = performance.now() + i * beat;
+				send([0x90 | DRUM_CH, i ? 77 : 76, 100], at);   // GM wood blocks
+				send([0x80 | DRUM_CH, i ? 77 : 76, 0], at + 80);
+			}
+		}
+		E.ev = lowerBound(E.evTimes, E.t);
+	}
 	keepAwake(true);
 	refresh();
 }
 
 function pause() {
-	if (E.playing) { E.t = nowT(); E.playing = false; }
+	if (E.playing) { E.t = Math.max(0, nowT()); E.playing = false; }
 	allOff();
 	E.struck.clear();
 	keepAwake(false);
@@ -380,25 +514,59 @@ function seek(t) {
 	if (was) play(); else refresh();
 }
 
+function count(ok) {
+	for (const s of [E.stats, E.pass, E.sess]) if (s) s[ok ? "good" : "bad"]++;
+}
+
+// End of a run (the song's end, or B of a repeated part): count missed notes, maybe speed up
+function endPass(to) {
+	if (settings.mode === "play") {
+		const lo = lowerBound(E.targetTimes, E.passFrom - 0.01), hi = lowerBound(E.targetTimes, to + 0.01);
+		let missed = 0;
+		for (let i = lo; i < hi; i++) if (!E.hit.has(i)) missed++;
+		for (let i = 0; i < missed; i++) count(false);
+		const total = E.pass.good + E.pass.bad;
+		if (settings.speedup && total >= 8 && E.pass.good / total >= SPEEDUP_AT && settings.tempo < 1) {
+			const from = settings.tempo;
+			settings.tempo = Math.min(1, Math.round((from + SPEEDUP_STEP) * 100) / 100);
+			store.set("settings", settings);
+			toast(`${Math.round(100 * E.pass.good / total)}% right! Tempo ${Math.round(from * 100)}% → ${Math.round(settings.tempo * 100)}%`);
+		}
+	}
+}
+
 function finish() {
+	endPass(E.song.duration);
 	E.playing = false;
 	allOff();
 	E.t = E.song.duration;
 	E.step = E.steps.length;
 	E.done = true;
 	keepAwake(false);
+	if (E.sess) E.sess.completed = true;
+	endSession();
 	refresh();
+}
+
+function repeatPart() {
+	endPass(E.loop.b);
+	if (E.sess) E.sess.loop = true;
+	E.playing = false;
+	allOff();
+	position(E.loop.a);
+	play();
 }
 
 function tick() {                     // play mode scheduler, every 15 ms
 	if (!E.playing || settings.mode !== "play") return;
-	const now = performance.now(), t = nowT(), horizon = t + LOOKAHEAD * settings.tempo;
+	const now = performance.now(), t = nowT(), horizon = Math.min(t + LOOKAHEAD * settings.tempo, loopEnd());
 	while (E.ev < E.events.length && E.events[E.ev].t <= horizon) {
 		const e = E.events[E.ev++];
 		const at = Math.max(now, E.anchor + (e.t - E.t) / settings.tempo * 1000);
 		if (e.on) light(e.ch, e.n, e.v, at); else unlight(e.ch, e.n, at);
 	}
-	if (t > E.song.duration + 0.5) finish();
+	if (t >= loopEnd()) repeatPart();
+	else if (t > E.song.duration + 0.5) finish();
 }
 setInterval(tick, 15);
 
@@ -411,7 +579,8 @@ function advance() {
 	playOthers(E.step);
 	E.step++;
 	E.struck.clear();
-	if (E.step >= E.steps.length) { finish(); return; }
+	if (E.step < E.steps.length && E.steps[E.step].t >= loopEnd() - 1e-6) { repeatPart(); return; }
+	if (E.step >= E.steps.length) { if (E.loop && E.loop.b !== null) repeatPart(); else finish(); return; }
 	E.t = E.steps[E.step].t;
 	lightStep();
 }
@@ -440,7 +609,7 @@ function onMidi(ev) {
 }
 
 function key(n, on) {
-	if (on) E.pressed.set(n, judge(n));
+	if (on) { E.lastKey = performance.now(); E.pressed.set(n, judge(n)); }
 	else E.pressed.delete(n);
 	refresh();
 }
@@ -450,22 +619,22 @@ function judge(n) {
 	if (settings.mode === "wait") {
 		if (E.step >= E.steps.length) return null;
 		const wanted = E.steps[E.step].notes;
-		if (!wanted.has(n)) { E.stats.bad++; return false; }
-		if (!E.struck.has(n)) E.stats.good++;
+		if (!wanted.has(n)) { count(false); return false; }
+		if (!E.struck.has(n)) count(true);
 		E.struck.add(n);
 		if ([...wanted.keys()].every(k => E.struck.has(k))) advance();
 		return true;
 	}
 	const t = nowT(), window = HIT_WINDOW * settings.tempo;
 	for (let i = lowerBound(E.targetTimes, t - window), hi = upperBound(E.targetTimes, t + window); i < hi; i++) {
-		if (E.targets[i].n === n && !E.hit.has(i)) { E.hit.add(i); E.stats.good++; return true; }
+		if (E.targets[i].n === n && !E.hit.has(i)) { E.hit.add(i); count(true); return true; }
 	}
-	E.stats.bad++;
+	count(false);
 	return false;
 }
 
 function configure(changes) {
-	const was = E.playing, t = nowT();
+	const was = E.playing, t = Math.max(0, nowT());
 	pause();
 	const soundChanged = "sound" in changes && changes.sound !== settings.sound;
 	Object.assign(settings, changes);
@@ -485,7 +654,7 @@ async function testLights() {
 			light(ch, base + step);
 			E.pressed.set(base + step, null);
 			refresh();
-			await new Promise(r => setTimeout(r, 250));
+			await sleep(250);
 			unlight(ch, base + step);
 			E.pressed.delete(base + step);
 		}
@@ -501,11 +670,48 @@ async function keepAwake(on) {
 	} catch { wakeLock = null; }
 }
 
-// ---------------------------------------------------------------- songs
+// ---------------------------------------------------------------- practice sessions
 
-let songIndex = [];
+// Time counts while playing; in wait mode only while keys were pressed in the last 20 s
+setInterval(() => {
+	if (E.playing && E.sess && (settings.mode === "play" || performance.now() - E.lastKey < IDLE)) E.sess.seconds++;
+}, 1000);
 
-async function loadSongs() {
+function endSession(beacon) {
+	const s = E.sess;
+	E.sess = null;
+	if (!s || !E.song || s.seconds < 5) return;
+	const body = { file: E.song.file, title: E.song.title, mode: settings.mode, hands: settings.hands, tempo: settings.tempo, ...s };
+	if (beacon && navigator.sendBeacon) {
+		navigator.sendBeacon("api/session", new Blob([JSON.stringify(body)], { type: "application/json" }));
+		return;
+	}
+	api("api/session", body).then(() => loadProgress()).catch(e => console.warn("session not saved", e));
+}
+
+// ---------------------------------------------------------------- songs, progress, library
+
+let songIndex = [], progressBy = {};
+
+function progressText(file, long) {
+	const p = progressBy[file];
+	if (!p) return long ? "Not practised yet" : "";
+	const best = p.best !== null ? `★ ${p.best}%` + (p.best_tempo && p.best_tempo !== 1 ? ` at ${Math.round(p.best_tempo * 100)}%` : "") : "";
+	if (!long) return best;
+	return [best, `${p.plays}×`, `${Math.round(p.minutes)} min`].filter(Boolean).join(" · ");
+}
+
+function fillSongSelect() {
+	const sel = $("song");
+	sel.innerHTML = `<option value="">${songIndex.length ? "Choose a song…" : "No songs yet (☰ Songs to add one)"}</option>` +
+		songIndex.map(s => {
+			const p = progressText(s.file);
+			return `<option value="${esc(s.file)}">${esc(s.title || s.file)}${p ? "  —  " + esc(p) : ""}</option>`;
+		}).join("");
+	if (E.song) sel.value = E.song.file;
+}
+
+async function loadSongs(first) {
 	try {
 		const res = await fetch("songs/songs.json", { cache: "no-store" });
 		songIndex = (await res.json()).slice().reverse();   // newest first
@@ -513,16 +719,25 @@ async function loadSongs() {
 		songIndex = [];
 		console.warn("songs.json", e);
 	}
-	const sel = $("song");
-	sel.innerHTML = `<option value="">${songIndex.length ? "Choose a song…" : "No songs yet (send one to Pandora)"}</option>` +
-		songIndex.map(s => `<option value="${esc(s.file)}">${esc(s.title || s.file)}</option>`).join("");
-	const last = store.get("song", "");
-	if (songIndex.some(s => s.file === last)) { sel.value = last; loadSong(last); }
+	fillSongSelect();
+	renderLibrary();
+	if (first) {
+		const last = store.get("song", "");
+		if (songIndex.some(s => s.file === last)) loadSong(last);
+	}
 	refresh();
+}
+
+async function loadProgress() {
+	try { progressBy = await api("api/progress"); } catch { progressBy = {}; }
+	fillSongSelect();
+	renderLibrary();
 }
 
 async function loadSong(file) {
 	pause();
+	endSession();
+	E.loop = null;
 	if (!file) { E.song = null; prepare(); position(0); refresh(); return; }
 	try {
 		const res = await fetch("songs/" + encodeURIComponent(file));
@@ -531,30 +746,177 @@ async function loadSong(file) {
 		const meta = songIndex.find(s => s.file === file);
 		E.song = { file, title: meta?.title || file, ...song };
 		store.set("song", file);
-		$("song").value = file;
 	} catch (e) {
 		E.song = null;
 		banner("Could not open that song", String(e.message || e));
 	}
+	$("song").value = E.song ? file : "";
 	prepare();
 	position(0);
 	refresh();
+	renderLibrary();
 }
+
+function renderLibrary() {
+	$("library").innerHTML = songIndex.length ? songIndex.map(s => `
+		<div class="item${E.song && E.song.file === s.file ? " current" : ""}" data-file="${esc(s.file)}">
+			<div class="what"><div>${esc(s.title || s.file)}</div><small>${esc(clock(s.seconds || 0))} · ${esc(progressText(s.file, true))}</small></div>
+			<button data-act="practise" class="primary">Practise</button>
+			<button data-act="rename" aria-label="Rename">✎</button>
+			<button data-act="delete" aria-label="Delete">🗑</button>
+		</div>`).join("") : `<p class="hint">No songs yet.</p>`;
+}
+
+$("library").onclick = async e => {
+	const act = e.target.dataset.act, item = e.target.closest(".item");
+	if (!act || !item) return;
+	const file = item.dataset.file, song = songIndex.find(s => s.file === file);
+	try {
+		if (act === "practise") { closeLibrary(); bannerText = null; await loadSong(file); }
+		else if (act === "rename") {
+			const title = prompt("New name", song?.title || file);
+			if (title && title.trim()) { await api("api/song/rename", { file, title }); await loadSongs(); if (E.song?.file === file) E.song.title = title.trim(); }
+		} else if (act === "delete") {
+			if (confirm(`Delete “${song?.title || file}”? The MIDI file is removed from the Pi.`)) {
+				await api("api/song/delete", { file });
+				if (E.song?.file === file) { E.song = null; store.set("song", ""); prepare(); position(0); }
+				await loadSongs();
+			}
+		}
+	} catch (err) { alert(err.message); }
+};
+
+let queueTimer = null, queueCount = 0;
+
+async function loadStats() {
+	try {
+		const s = await api("api/stats");
+		$("stToday").textContent = s.today;
+		$("stWeek").textContent = s.week;
+		$("stStreak").textContent = s.streak;
+		const days = [];
+		const today = new Date(Date.now() - 4 * 3600e3);
+		for (let i = 27; i >= 0; i--) {
+			const d = new Date(today.getTime() - i * 864e5);
+			const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			days.push([key, s.days[key] || 0]);
+		}
+		const most = Math.max(15, ...days.map(d => d[1]));
+		$("days").innerHTML = days.map(([k, m]) =>
+			`<div class="${m ? "" : "zero"}" style="height:${m ? Math.max(8, 100 * m / most) : 4}%" title="${k}: ${Math.round(m)} min"></div>`).join("");
+	} catch (e) { $("stToday").textContent = "?"; }
+}
+
+async function loadQueue() {
+	let items = [];
+	try { items = await api("api/queue"); } catch (e) { $("queue").innerHTML = `<p class="hint err">${esc(e.message)}</p>`; return; }
+	if (items.length < queueCount) loadSongs();      // something finished: refresh the library
+	queueCount = items.length;
+	$("queueHead").style.display = $("queue").style.display = items.length ? "" : "none";
+	$("queue").innerHTML = items.map(q => {
+		let state = "", buttons = "";
+		if (q.state === "fetching") state = "Downloading…";
+		else if (q.state === "waiting") state = "Waiting for the Pi…";
+		else if (q.state === "converting") {
+			const left = q.minutes ? Math.max(1, Math.round(q.minutes - (Date.now() / 1000 - q.started) / 60)) : null;
+			state = `Writing down notes (${q.fast ? "fast" : "accurate"})` + (left ? `, ~${left} min left` : "") + "…";
+		} else if (q.state === "failed") {
+			state = `<span class="err">Failed: ${esc(q.error)}</span>`;
+		}
+		if (q.state === "queued" || (q.state === "failed" && q.seconds)) {
+			buttons = `<button data-act="fast" title="Spotify basic-pitch on the Pi">⚡ ~${q.estimate_fast} min</button>
+				<button data-act="accurate" title="ByteDance model on the Pi">🎯 ~${q.estimate_accurate} min</button>`;
+		}
+		if (q.state !== "converting" && q.state !== "waiting" && q.state !== "fetching") buttons += `<button data-act="drop" aria-label="Remove">🗑</button>`;
+		return `<div class="item" data-id="${esc(q.id)}"><div class="what"><div>${esc(q.title || q.id)}</div>
+			<small>${q.seconds ? esc(clock(q.seconds)) + " · " : ""}${state || "Waiting (or convert on a computer)"}</small></div>${buttons}</div>`;
+	}).join("");
+}
+
+$("queue").onclick = async e => {
+	const act = e.target.dataset.act, item = e.target.closest(".item");
+	if (!act || !item) return;
+	try {
+		if (act === "drop") await api("api/drop", { id: item.dataset.id });
+		else await api("api/convert", { id: item.dataset.id, fast: act === "fast" });
+	} catch (err) { alert(err.message); }
+	loadQueue();
+};
+
+$("addGo").onclick = async () => {
+	const url = $("addUrl").value.trim();
+	if (!url) { $("addUrl").focus(); return; }
+	try {
+		await api("api/add", { url, convert: $("addHow").value || null });
+		$("addUrl").value = "";
+		$("addMsg").textContent = "Downloading… it shows up below, then in the library when the notes are ready.";
+	} catch (err) { $("addMsg").innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+	loadQueue();
+};
+$("addUrl").onkeydown = e => { if (e.key === "Enter") $("addGo").click(); };
+$("uploadBtn").onclick = () => $("upload").click();
+$("upload").onchange = async e => {
+	const file = e.target.files[0];
+	e.target.value = "";
+	if (!file) return;
+	const title = prompt("Song name", file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "));
+	if (title === null) return;
+	$("addMsg").textContent = `Uploading ${file.name}…`;
+	try {
+		const q = new URLSearchParams({ name: file.name, title, convert: $("addHow").value });
+		const res = await fetch("api/upload?" + q, { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+		const data = await res.json();
+		if (!res.ok || data.ok === false) throw new Error(data.error || "HTTP " + res.status);
+		$("addMsg").textContent = data.file ? `Added “${data.title}” to the library.` : "Uploaded. It is being turned into notes (see below).";
+		await loadSongs();
+	} catch (err) { $("addMsg").innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+	loadQueue();
+};
+
+function openLibrary() {
+	if (E.playing) pause();
+	$("lib").classList.add("open");
+	loadStats(); loadQueue(); loadProgress(); loadSongs();
+	clearInterval(queueTimer);
+	queueTimer = setInterval(loadQueue, 4000);
+}
+function closeLibrary() {
+	$("lib").classList.remove("open");
+	clearInterval(queueTimer);
+}
+$("libbtn").onclick = openLibrary;
+$("libclose").onclick = closeLibrary;
+$("lib").onclick = e => { if (e.target.id === "lib") closeLibrary(); };
 
 // ---------------------------------------------------------------- controls
 
-let bannerText = null;
+let bannerText = null, toastTimer = null;
 function banner(title, detail) { bannerText = title ? [title, detail] : null; refresh(); }
+function toast(text) {
+	$("toast").textContent = text;
+	$("toast").classList.add("show");
+	clearTimeout(toastTimer);
+	toastTimer = setTimeout(() => $("toast").classList.remove("show"), 3500);
+}
 
 function refresh() {
 	for (const b of $("hands").children) b.classList.toggle("on", b.dataset.v === settings.hands);
 	for (const b of $("mode").children) b.classList.toggle("on", b.dataset.v === settings.mode);
 	$("tempo").textContent = Math.round(settings.tempo * 100) + "%";
-	$("sound").classList.toggle("on", settings.sound);
-	$("other").classList.toggle("on", settings.other);
+	for (const id of ["sound", "other", "countin", "speedup"]) $(id).classList.toggle("on", settings[id]);
 	$("other").disabled = settings.hands === "B";
 	$("play").textContent = E.playing ? "⏸" : "▶";
-	$("play").disabled = $("restart").disabled = !E.song;
+	$("play").disabled = $("restart").disabled = $("loopA").disabled = $("loopB").disabled = !E.song;
+	$("loopA").classList.toggle("on", !!E.loop);
+	$("loopB").classList.toggle("on", !!(E.loop && E.loop.b !== null));
+	$("loopX").disabled = !E.loop;
+	const band = $("loopband");
+	if (E.loop && E.song && E.song.duration) {
+		const a = E.loop.a / E.song.duration, b = (E.loop.b ?? E.loop.a) / E.song.duration;
+		band.style.display = "block";
+		band.style.left = 100 * a + "%";
+		band.style.width = Math.max(0.6, 100 * (b - a)) + "%";
+	} else band.style.display = "none";
 	const s = E.stats, total = s.good + s.bad;
 	$("stats").innerHTML = total ? `<b>✓ ${s.good}</b> <i>✗ ${s.bad}</i>` : "";
 	let b = bannerText;
@@ -566,21 +928,40 @@ function refresh() {
 $("song").onchange = e => { bannerText = null; loadSong(e.target.value); };
 $("hands").onclick = e => { if (e.target.dataset.v) configure({ hands: e.target.dataset.v }); };
 $("mode").onclick = e => { if (e.target.dataset.v) configure({ mode: e.target.dataset.v }); };
-$("slower").onclick = () => configure({ tempo: settings.tempo - 0.1 });
-$("faster").onclick = () => configure({ tempo: settings.tempo + 0.1 });
-$("sound").onclick = () => configure({ sound: !settings.sound });
-$("other").onclick = () => configure({ other: !settings.other });
+$("slower").onclick = () => configure({ tempo: settings.tempo - 0.05 });
+$("faster").onclick = () => configure({ tempo: settings.tempo + 0.05 });
+for (const id of ["sound", "other", "countin", "speedup"]) $(id).onclick = () => configure({ [id]: !settings[id] });
+$("menubtn").onclick = e => { e.stopPropagation(); $("menu").classList.toggle("open"); };
+document.addEventListener("pointerdown", e => { if (!$("menu").contains(e.target) && e.target.id !== "menubtn") $("menu").classList.remove("open"); });
 $("play").onclick = () => { bannerText = null; E.playing ? pause() : play(); };
-$("restart").onclick = () => { bannerText = null; seek(0); };
-$("test").onclick = () => testLights();
+$("restart").onclick = () => { bannerText = null; seek(E.loop ? E.loop.a : 0); };
+$("test").onclick = () => { $("menu").classList.remove("open"); testLights(); };
 $("dev").onchange = e => { store.set("device", e.target.value); pickDevice(); };
+$("loopA").onclick = () => {
+	const t = Math.max(0, nowT());
+	const b = E.loop && E.loop.b !== null && E.loop.b > t + 0.5 ? E.loop.b : null;   // keep B if it is still after A
+	E.loop = { a: t, b };
+	refresh();
+};
+$("loopB").onclick = () => {
+	const t = Math.max(0, nowT());
+	if (!E.loop) E.loop = { a: Math.max(0, t - 8), b: null };    // B alone: repeat the last 8 s
+	if (t <= E.loop.a + 0.5) { toast("B must come after A"); return; }
+	E.loop.b = t;
+	if (E.sess) E.sess.loop = true;
+	const was = E.playing;
+	pause();
+	position(E.loop.a);
+	if (was) play(); else refresh();
+};
+$("loopX").onclick = () => { E.loop = null; refresh(); };
 $("bar").onpointerdown = e => {
 	if (!E.song) return;
 	const r = $("bar").getBoundingClientRect();
 	seek((e.clientX - r.left) / r.width * E.song.duration);
 };
 document.addEventListener("keydown", e => {
-	if (e.code === "Space" && e.target.tagName !== "SELECT") { e.preventDefault(); $("play").click(); }
+	if (e.code === "Space" && !/SELECT|INPUT/.test(e.target.tagName) && !$("lib").classList.contains("open")) { e.preventDefault(); $("play").click(); }
 });
 
 // ---------------------------------------------------------------- drawing
@@ -617,8 +998,17 @@ function frame(now) {
 	shownT = E.playing && settings.mode === "play" ? t : shownT + (t - shownT) * Math.min(1, dt * 10);
 	if (Math.abs(t - shownT) > 30) shownT = t;
 	draw(shownT);
+	if (E.playing && settings.mode === "play" && now < E.anchor) {    // count-in
+		const beat = E.song.beat / settings.tempo * 1000;
+		ctx.fillStyle = "rgba(255,255,255,.9)";
+		ctx.font = `bold ${Math.round(Math.min(W, H) * 0.22)}px system-ui, sans-serif`;
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.fillText(String(Math.min(4, Math.ceil((E.anchor - now) / beat))), W / 2, (H - KH) / 2);
+		ctx.textBaseline = "alphabetic";
+	}
 	const dur = E.song ? E.song.duration : 0;
-	$("fill").style.width = (dur ? Math.min(100, 100 * t / dur) : 0) + "%";
+	$("fill").style.width = (dur ? Math.min(100, Math.max(0, 100 * t / dur)) : 0) + "%";
 	$("time").textContent = `${clock(t)} / ${clock(dur)}`;
 }
 
@@ -632,6 +1022,10 @@ function draw(t) {
 	ctx.strokeStyle = "#262a32";
 	ctx.lineWidth = 1;
 	for (let n = LOW; n <= HIGH; n += 12) { ctx.beginPath(); ctx.moveTo(keys[n].x + .5, 0); ctx.lineTo(keys[n].x + .5, RH); ctx.stroke(); }
+	if (E.loop && E.loop.b !== null) {   // end of the repeated part
+		const y = RH - (E.loop.b - t) * pps;
+		if (y > 0 && y < RH) { ctx.fillStyle = "rgba(255,214,10,.8)"; ctx.fillRect(0, y - 1, W, 2); }
+	}
 
 	const active = new Map();         // note -> fill colour on the keyboard
 	if (E.song) {
@@ -713,13 +1107,15 @@ cv.addEventListener("pointerup", release);
 cv.addEventListener("pointercancel", release);
 cv.addEventListener("pointerleave", release);
 
-window.addEventListener("pagehide", () => allOff());
-document.addEventListener("visibilitychange", () => { if (document.hidden && E.playing) pause(); });
+window.addEventListener("pagehide", () => { allOff(); endSession(true); });
+document.addEventListener("visibilitychange", () => {
+	if (document.hidden) { if (E.playing) pause(); endSession(true); }
+});
 
 refresh();
 requestAnimationFrame(frame);
 initMidi();
-loadSongs();
+loadSongs(true).then(loadProgress);
 </script>
 </body>
 </html>

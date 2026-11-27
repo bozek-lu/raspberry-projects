@@ -325,9 +325,20 @@
     - Piano tutor:
         icon: mdi-piano
         href: https://homepi.tail04e168.ts.net:8445
-        description: Key lights for the EZ-310 (iPad - Web MIDI Browser app)
-        server: local
-        container: piano-tutor
+        description: EZ-310 key lights, songs and practice (iPad - Web MIDI Browser app)
+        widget:
+          type: customapi
+          url: http://host.docker.internal:8096/api/stats
+          refreshInterval: 120000
+          mappings:
+            - field: week
+              label: This week
+            - field: streak
+              label: Streak
+            - field: last
+              label: Last
+            - field: queue
+              label: Converting
     - Uptime Kuma:
         icon: uptime-kuma.png
         href: http://homepi.tail04e168.ts.net:3001

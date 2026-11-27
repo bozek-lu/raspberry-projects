@@ -10,7 +10,7 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 | `pi/home/server/paperless/` | Paperless-ngx for receipts and documents (tailnet only, `:8444`); one-time `setup.sh` |
 | `pi/home/receipts.py` | Photos/PDFs sent to Pandora go to Paperless and get linked to the matching Actual transaction |
 | `pi/home/piano.py`, `pi/home/server/piano/` | Piano songs for the EZ-310 tutor ([piano-tutor](https://github.com/bozek-lu/piano-tutor)), see below; song server on `:8095` for the Tab5 |
-| `pi/home/server/piano/tutor/` | Piano tutor web page for the iPad (`:8096`, tailnet `https://homepi.tail04e168.ts.net:8445`), see below |
+| `pi/home/server/piano/tutor/` | Piano tutor for the iPad: page, practice stats, song library (`:8096`, tailnet `:8445`), see below |
 | `tools/piano-convert.py` | Converts the Pi's piano queue on a faster computer |
 | `pi/sync-filter.txt` | What gets synced; secrets and data are excluded |
 | `claude-usage-push/` | Mac launchd job pushing Claude usage to the Pi |
@@ -30,18 +30,24 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 
 ## Piano tutor (tablet)
 
-`server/piano/tutor/index.html`, served by the `piano-tutor` container at `http://homepi.local:8096` (LAN) and
+`server/piano/tutor/`: `server.py` (Python standard library, systemd unit `piano-tutor.service`, port 8096)
+serves `index.html`, the songs and a small API. Addresses: `http://homepi.local:8096` (LAN) and
 `https://homepi.tail04e168.ts.net:8445` (tailnet, `tailscale serve --bg --https=8445 http://127.0.0.1:8096`).
-The EZ-310 plugs into the **tablet** (USB-B to USB-C/Lightning cable or Apple camera adapter); the page does
-everything in the browser with Web MIDI: lights the next notes on the light channels (1 = right, 2 = left),
-reads key presses, waits for the right keys ("Wait for me") or plays in time at a chosen tempo ("Play along").
+The EZ-310 plugs into the **tablet** (USB-B to USB-C/Lightning cable or Apple camera adapter); the page does the
+tutoring in the browser with Web MIDI: lights the next notes on the light channels (1 = right, 2 = left), reads
+key presses, waits for the right keys ("Wait for me") or plays in time at a chosen tempo ("Play along").
 
 - iPad Safari has no Web MIDI: open the page in the free **Web MIDI Browser** app. Chrome/Edge on a computer or
   Android need the https address.
-- Lit notes are muted (CC7 = 0 on channels 1/2) unless "Guide sound" is on; "Other hand" plays the hand you
-  are not practising on channel 3.
+- Options (⚙): Guide sound (lit notes muted with CC7 = 0 on channels 1/2 otherwise), Other hand (the hand you
+  are not practising, on channel 3), Count-in (4 GM wood-block clicks on channel 10), Speed up (+5% tempo after a
+  Play along run with 90% right, up to 100%). A / B on the bottom bar repeat a part of the song.
+- ☰ Songs: practice minutes (today, week, streak, last 4 weeks), add a YouTube link or upload a MIDI/audio file
+  (same code as Pandora: `~/piano.py` and the transcriber), the conversion queue with ⚡/🎯 buttons, rename/delete.
+- Practice sessions go to `~/server/piano/practice.json` (time counts while playing; in Wait for me only with a
+  key press in the last 20 s). The Homepage tile reads `/api/stats`.
 - On the keyboard: Function 041 Light Guide On, 042/043 light channels 1/2 (defaults).
-- Editing the page needs no restart (the container serves it through a symlink); reload the tablet.
+- `deploy.sh` restarts the service when `server.py` or the unit changes; `index.html` needs only a page reload.
 
 ## Workflow
 
