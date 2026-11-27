@@ -80,42 +80,95 @@ def accuracy(s):
 	return round(100 * s.get("good", 0) / total) if total else None
 
 
+def short(title, size=30):
+	title = title or "?"
+	return title if len(title) <= size else title[:size - 1] + "…"
+
+
+def days_text(n):
+	return f"{n} day" + ("" if n == 1 else "s")
+
+
+def when(ts):
+	"""'today 19:40', 'yesterday 08:15', '3 days ago'."""
+	ago = (practice_day(time.time()) - practice_day(ts)).days
+	clock = datetime.datetime.fromtimestamp(ts).strftime("%H:%M")
+	return f"today {clock}" if ago == 0 else f"yesterday {clock}" if ago == 1 else f"{ago} days ago"
+
+
 def stats():
+	"""Practice summary: the tutor page's drawer and the Homepage tile (text fields ready to show)."""
 	sessions = read_json(PRACTICE, [])
 	songs = piano.songs()
+	titles = {s["file"]: s.get("title") for s in songs}
 	today = practice_day(time.time())
 	week_start = today - datetime.timedelta(days=today.weekday())
-	minutes_by_day = {}
+	month_start = today.replace(day=1)
+	minutes_by_day, minutes_by_song_month = {}, {}
 	for s in sessions:
 		day = practice_day(s["ts"])
 		minutes_by_day[day] = minutes_by_day.get(day, 0) + s.get("seconds", 0) / 60
+		if day >= month_start:
+			minutes_by_song_month[s["file"]] = minutes_by_song_month.get(s["file"], 0) + s.get("seconds", 0) / 60
 	streak, day = 0, today
 	if minutes_by_day.get(day, 0) < 1:
 		day -= datetime.timedelta(days=1)       # today doesn't break the streak until it's over
 	while minutes_by_day.get(day, 0) >= 1:
 		streak += 1
 		day -= datetime.timedelta(days=1)
+	best_streak = run = 0
+	previous = None
+	for d in sorted(d for d, m in minutes_by_day.items() if m >= 1):
+		run = run + 1 if previous and (d - previous).days == 1 else 1
+		best_streak = max(best_streak, run)
+		previous = d
 	week = sum(m for d, m in minutes_by_day.items() if d >= week_start)
-	last = sessions[-1] if sessions else None
-	last_text = "-"
-	if last:
+	month = sum(m for d, m in minutes_by_day.items() if d >= month_start)
+	week_sessions = sum(1 for s in sessions if practice_day(s["ts"]) >= week_start)
+
+	last_text = last_when = "-"
+	if sessions:
+		last = sessions[-1]
 		acc = accuracy(last)
-		last_text = last.get("title") or last.get("file", "?")
-		if len(last_text) > 32:
-			last_text = last_text[:31] + "…"
+		last_text = short(titles.get(last["file"]) or last.get("title") or last["file"])
 		if acc is not None:
 			last_text += f" · {acc}%"
-	queue = piano.queue()
+		last_when = when(last["ts"])
+	top = max(minutes_by_song_month.items(), key=lambda kv: kv[1], default=None)
+	top_text = f"{short(titles.get(top[0]) or top[0])} · {duration(top[1])}" if top else "-"
+	best = None
+	for file, p in progress().items():
+		if p["best"] is not None and file in titles and (best is None or (p["best"], p["best_tempo"]) > best[1:]):
+			best = (file, p["best"], p["best_tempo"])
+	best_text = "-"
+	if best:
+		best_text = f"{short(titles[best[0]])} · {best[1]}%"
+		if best[2] and best[2] != 1:
+			best_text += f" at {round(best[2] * 100)}%"
+
+	waiting = len(piano.queue())
+	converting = sum(1 for j in jobs.values() if j["state"] in ("converting", "fetching"))
+	queue_text = ", ".join(t for t in (f"{converting} in progress" if converting else "",
+		f"{waiting - min(waiting, converting)} waiting" if waiting > converting else "") if t) or "nothing"
+	practised = len({s["file"] for s in sessions if s["file"] in titles})
 	return {
 		"today": duration(minutes_by_day.get(today, 0)),
 		"today_minutes": round(minutes_by_day.get(today, 0)),
 		"week": duration(week),
+		"week_text": duration(week) + (f" · {week_sessions} session" + ("" if week_sessions == 1 else "s") if week_sessions else ""),
 		"week_minutes": round(week),
-		"streak": f"{streak} day" + ("" if streak == 1 else "s"),
+		"month": duration(month),
+		"total": duration(sum(minutes_by_day.values())),
+		"streak": days_text(streak),
 		"streak_days": streak,
+		"best_streak": days_text(best_streak),
 		"last": last_text,
-		"songs": len(songs),
-		"queue": len(queue) + sum(1 for j in jobs.values() if j["state"] == "fetching"),
+		"last_when": last_when,
+		"top_song": top_text,
+		"best_song": best_text,
+		"songs": f"{len(songs)} ({practised} practised)",
+		"song_count": len(songs),
+		"queue": queue_text,
 		"sessions": len(sessions),
 		"days": {str(d): round(m, 1) for d, m in sorted(minutes_by_day.items()) if d >= today - datetime.timedelta(days=27)},
 	}

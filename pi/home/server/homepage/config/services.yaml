@@ -154,6 +154,38 @@
               label: Calls (7 days)
             - field: claude_cost_month
               label: Value this month
+    - Piano tutor:
+        icon: mdi-piano
+        href: https://homepi.tail04e168.ts.net:8445
+        description: "EZ-310 key lights: open on the iPad in the Web MIDI Browser app"
+        widget:
+          type: customapi
+          url: http://host.docker.internal:8096/api/stats
+          refreshInterval: 60000
+          display: list
+          mappings:
+            - field: today
+              label: Practised today
+            - field: week_text
+              label: This week
+            - field: month
+              label: This month
+            - field: streak
+              label: Streak
+            - field: best_streak
+              label: Best streak
+            - field: last
+              label: Last song
+            - field: last_when
+              label: Last practice
+            - field: best_song
+              label: Best score
+            - field: top_song
+              label: Most practised (month)
+            - field: songs
+              label: Songs
+            - field: queue
+              label: Converting
 
 - Budget:
     - This month:
@@ -322,23 +354,6 @@
         description: Receipts and documents (send them to Pandora)
         server: local
         container: paperless
-    - Piano tutor:
-        icon: mdi-piano
-        href: https://homepi.tail04e168.ts.net:8445
-        description: EZ-310 key lights, songs and practice (iPad - Web MIDI Browser app)
-        widget:
-          type: customapi
-          url: http://host.docker.internal:8096/api/stats
-          refreshInterval: 120000
-          mappings:
-            - field: week
-              label: This week
-            - field: streak
-              label: Streak
-            - field: last
-              label: Last
-            - field: queue
-              label: Converting
     - Uptime Kuma:
         icon: uptime-kuma.png
         href: http://homepi.tail04e168.ts.net:3001

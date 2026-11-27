@@ -45,7 +45,7 @@ key presses, waits for the right keys ("Wait for me") or plays in time at a chos
 - ☰ Songs: practice minutes (today, week, streak, last 4 weeks), add a YouTube link or upload a MIDI/audio file
   (same code as Pandora: `~/piano.py` and the transcriber), the conversion queue with ⚡/🎯 buttons, rename/delete.
 - Practice sessions go to `~/server/piano/practice.json` (time counts while playing; in Wait for me only with a
-  key press in the last 20 s). The Homepage tile reads `/api/stats`.
+  key press in the last 20 s). The Homepage tile (top "Raspberry Pi" section) reads `/api/stats`.
 - On the keyboard: Function 041 Light Guide On, 042/043 light channels 1/2 (defaults).
 - `deploy.sh` restarts the service when `server.py` or the unit changes; `index.html` needs only a page reload.
 
