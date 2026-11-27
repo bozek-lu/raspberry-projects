@@ -322,6 +322,12 @@
         description: Receipts and documents (send them to Pandora)
         server: local
         container: paperless
+    - Piano tutor:
+        icon: mdi-piano
+        href: https://homepi.tail04e168.ts.net:8445
+        description: Key lights for the EZ-310 (iPad - Web MIDI Browser app)
+        server: local
+        container: piano-tutor
     - Uptime Kuma:
         icon: uptime-kuma.png
         href: http://homepi.tail04e168.ts.net:3001

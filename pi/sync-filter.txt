@@ -62,6 +62,8 @@
 + /server/piano/
 + /server/piano/Dockerfile
 + /server/piano/*.py
++ /server/piano/tutor/
++ /server/piano/tutor/*.html
 + /homeassistant/
 + /homeassistant/*.yaml
 + /homeassistant/compose.yaml

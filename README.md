@@ -10,6 +10,7 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 | `pi/home/server/paperless/` | Paperless-ngx for receipts and documents (tailnet only, `:8444`); one-time `setup.sh` |
 | `pi/home/receipts.py` | Photos/PDFs sent to Pandora go to Paperless and get linked to the matching Actual transaction |
 | `pi/home/piano.py`, `pi/home/server/piano/` | Piano songs for the EZ-310 tutor ([piano-tutor](https://github.com/bozek-lu/piano-tutor)), see below; song server on `:8095` for the Tab5 |
+| `pi/home/server/piano/tutor/` | Piano tutor web page for the iPad (`:8096`, tailnet `https://homepi.tail04e168.ts.net:8445`), see below |
 | `tools/piano-convert.py` | Converts the Pi's piano queue on a faster computer |
 | `pi/sync-filter.txt` | What gets synced; secrets and data are excluded |
 | `claude-usage-push/` | Mac launchd job pushing Claude usage to the Pi |
@@ -26,6 +27,21 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 - Songs get the right hand on channel 1 and the left on channel 2 (EZ-310 light channels), notes folded
   into the keyboard's 61 keys. Pandora sends each finished song; the Tab5 reads `http://homepi.local:8095/songs.json`.
 - `/piano` lists songs, `/piano kolejka` the queue (with convert / delete buttons).
+
+## Piano tutor (tablet)
+
+`server/piano/tutor/index.html`, served by the `piano-tutor` container at `http://homepi.local:8096` (LAN) and
+`https://homepi.tail04e168.ts.net:8445` (tailnet, `tailscale serve --bg --https=8445 http://127.0.0.1:8096`).
+The EZ-310 plugs into the **tablet** (USB-B to USB-C/Lightning cable or Apple camera adapter); the page does
+everything in the browser with Web MIDI: lights the next notes on the light channels (1 = right, 2 = left),
+reads key presses, waits for the right keys ("Wait for me") or plays in time at a chosen tempo ("Play along").
+
+- iPad Safari has no Web MIDI: open the page in the free **Web MIDI Browser** app. Chrome/Edge on a computer or
+  Android need the https address.
+- Lit notes are muted (CC7 = 0 on channels 1/2) unless "Guide sound" is on; "Other hand" plays the hand you
+  are not practising on channel 3.
+- On the keyboard: Function 041 Light Guide On, 042/043 light channels 1/2 (defaults).
+- Editing the page needs no restart (the container serves it through a symlink); reload the tablet.
 
 ## Workflow
 
