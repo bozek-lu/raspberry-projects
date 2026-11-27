@@ -72,6 +72,11 @@ def fetch_link(url):
 	return _run("fetch", url)
 
 
+def search(words, count=8):
+	"""YouTube search by song name -> {"ok", "results": [{id, title, url, seconds, channel, views, too_long}]}."""
+	return _run("search", words, str(count))
+
+
 def fetch_file(host_path, title):
 	return _run("fetch", _container_path(host_path), title)
 
@@ -89,6 +94,7 @@ def add_midi(host_path, title):
 
 
 def drop(qid):
+	request_computer(qid, False)
 	return _run("drop", qid)
 
 
@@ -106,6 +112,86 @@ def songs():
 
 def queue():
 	return _index(os.path.join(QUEUE_DIR, "queue.json"))
+
+
+# --- converting on a computer (tools/piano-convert.py --watch on a Mac/PC) ----------------------
+# Pandora's 💻 button and the tutor page put queue ids into computer.json; a computer running the
+# watcher checks in every 30 s (.worker-<name> heartbeat files), claims an id (.claim-<id>), converts
+# it with the accurate model and registers the result. Converting on the Pi stays the last resort.
+COMPUTER_FILE = os.path.join(QUEUE_DIR, "computer.json")
+ONLINE_SECONDS = 120
+
+
+def _write(path, data):
+	tmp = f"{path}.{os.getpid()}.tmp"
+	with open(tmp, "w") as f:
+		json.dump(data, f, ensure_ascii=False, indent=1)
+	os.replace(tmp, path)
+
+
+def computer_requests():
+	"""{queue id: time requested} waiting for a computer."""
+	try:
+		with open(COMPUTER_FILE) as f:
+			data = json.load(f)
+		return data if isinstance(data, dict) else {}
+	except (FileNotFoundError, json.JSONDecodeError):
+		return {}
+
+
+def request_computer(qid, wanted=True):
+	requests = computer_requests()
+	if wanted:
+		requests[qid] = int(time.time())
+		error = os.path.join(QUEUE_DIR, f"{qid}.computer-error")
+		if os.path.exists(error):
+			os.remove(error)
+	else:
+		requests.pop(qid, None)
+	_write(COMPUTER_FILE, requests)
+
+
+def workers():
+	"""Computers running the watcher: [{name, device, busy, seen, online}] (newest first)."""
+	out = []
+	for name in os.listdir(QUEUE_DIR):
+		if not name.startswith(".worker-"):
+			continue
+		try:
+			with open(os.path.join(QUEUE_DIR, name)) as f:
+				w = json.load(f)
+		except (OSError, json.JSONDecodeError):
+			continue
+		w["online"] = time.time() - w.get("seen", 0) < ONLINE_SECONDS
+		out.append(w)
+	return sorted(out, key=lambda w: -w.get("seen", 0))
+
+
+def computer_state(qid):
+	"""(state, detail) of a queue item on the computer side: claimed / requested / failed / None."""
+	claim = os.path.join(QUEUE_DIR, f".claim-{qid}")
+	if os.path.exists(claim):
+		with open(claim) as f:
+			who = f.read().strip()
+		if any(w["online"] and w.get("name") == who for w in workers()):
+			return "computer", who
+	error = os.path.join(QUEUE_DIR, f"{qid}.computer-error")
+	if os.path.exists(error):
+		with open(error) as f:
+			return "computer-failed", f.read().strip()[-300:]
+	if qid in computer_requests():
+		return "for-computer", None
+	return None, None
+
+
+def converting_on_pi():
+	"""Queue ids the transcriber container is converting right now (from Pandora, the tutor or a leftover)."""
+	try:
+		run = subprocess.run(["docker", "ps", "--no-trunc", "--filter", "label=com.docker.compose.service=transcriber",
+			"--format", "{{.Command}}"], capture_output=True, text=True, timeout=10)
+	except (OSError, subprocess.TimeoutExpired):
+		return set()
+	return set(re.findall(r"transcribe\.py convert ([\w-]+)", run.stdout))
 
 
 def song_path(song):

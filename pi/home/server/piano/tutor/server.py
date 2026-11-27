@@ -6,9 +6,11 @@ Serves the tablet page (index.html) and the songs, and adds what a static server
   GET  /api/progress          per-song practice: plays, best accuracy, minutes, last time
   POST /api/session           the page reports a finished practice session
   GET  /api/queue             songs waiting for conversion, plus jobs running from here
-  POST /api/add               {"url", "convert": "fast"|"accurate"|null}  YouTube link -> queue
-  POST /api/upload?name=&title=&convert=   raw file body: MIDI -> songs, audio -> queue
-  POST /api/convert           {"id", "fast"}
+  GET  /api/search?q=&piano=1 YouTube search by song name ("piano" added unless piano=0), marks songs already here
+  POST /api/add               {"url", "how"}  YouTube link -> queue, then convert as "how" says
+  POST /api/upload?name=&title=&how=   raw file body: MIDI -> songs, audio -> queue
+  POST /api/convert           {"id", "how"}  how: "computer" (accurate, on a Mac/PC running
+                              tools/piano-convert.py --watch), "pi-fast" or "pi-accurate" (last resort)
   POST /api/drop              {"id"}
   POST /api/song/rename       {"file", "title"}
   POST /api/song/delete       {"file"}
@@ -246,7 +248,25 @@ def delete_song(file):
 	log("deleted song", file)
 
 
-def run_job(key, title, work, then_convert=None):
+def convert_as(qid, how):
+	"""computer: hand it to a Mac/PC (the default for accurate notes); pi-fast / pi-accurate: here."""
+	if how == "computer":
+		job = jobs.get(qid, {})
+		if job.get("state") == "converting":
+			raise ValueError("already converting on the Pi")
+		if job.get("state") == "waiting":
+			job["cancel"] = True                # its thread drops it when its turn comes
+		else:
+			jobs.pop(qid, None)                 # e.g. an earlier failure on the Pi
+		piano.request_computer(qid)
+		log("for computer", qid)
+	elif how in ("pi-fast", "pi-accurate"):
+		start_convert(qid, how == "pi-fast")
+	elif how:
+		raise ValueError(f"unknown conversion: {how}")
+
+
+def run_job(key, title, work, then_how=None):
 	"""Background job (fetch, upload, convert), visible in /api/queue until it ends."""
 	def target():
 		try:
@@ -257,8 +277,8 @@ def run_job(key, title, work, then_convert=None):
 				return
 			log("job done", key, result.get("title") or result.get("file") or result.get("id"))
 			jobs.pop(key, None)
-			if then_convert is not None and result.get("id") and not result.get("file"):
-				start_convert(result["id"], then_convert)
+			if then_how and result.get("id") and not result.get("file"):
+				convert_as(result["id"], then_how)
 		except Exception as e:
 			traceback.print_exc()
 			jobs[key].update(state="failed", error=str(e))
@@ -270,13 +290,17 @@ def start_convert(qid, fast):
 	entry = next((e for e in piano.queue() if e["id"] == qid), None)
 	if not entry:
 		raise ValueError("not in the queue")
-	if jobs.get(qid, {}).get("state") in ("waiting", "converting"):
+	if jobs.get(qid, {}).get("state") in ("waiting", "converting") or qid in piano.converting_on_pi():
 		return
+	piano.request_computer(qid, False)
 	jobs[qid] = {"state": "waiting", "title": entry.get("title"), "fast": fast, "started": time.time(),
 		"minutes": piano.estimate(entry.get("seconds"), fast)}
 
 	def target():
 		with convert_lock:
+			if jobs.get(qid, {}).get("cancel"):     # moved to a computer while waiting
+				jobs.pop(qid, None)
+				return
 			jobs[qid].update(state="converting", started=time.time())
 			log("converting", qid, "fast" if fast else "accurate")
 			try:
@@ -293,10 +317,22 @@ def start_convert(qid, fast):
 
 
 def queue_view():
+	"""{"items": queue with where/how each item is being converted, "workers": computers running the watcher}."""
 	items = []
+	on_pi = piano.converting_on_pi()
 	for e in piano.queue():
 		job = jobs.get(e["id"], {})
-		items.append({**e, "state": job.get("state", "queued"), "error": job.get("error"), "fast": job.get("fast"),
+		if job.get("cancel"):
+			job = {}
+		state, detail = job.get("state"), job.get("error")
+		if not state or state == "failed":
+			cstate, cdetail = piano.computer_state(e["id"])
+			if cstate:
+				state, detail = cstate, cdetail
+		if e["id"] in on_pi and state != "converting":
+			state = "converting"                # started by Pandora, or before a restart of this server
+		items.append({**e, "state": state or "queued", "error": detail if state in ("failed", "computer-failed") else None,
+			"worker": detail if state == "computer" else None, "fast": job.get("fast"),
 			"minutes": job.get("minutes"), "started": job.get("started"),
 			"estimate_fast": piano.estimate(e.get("seconds"), True), "estimate_accurate": piano.estimate(e.get("seconds"), False)})
 	known = {i["id"] for i in items}
@@ -304,17 +340,42 @@ def queue_view():
 		if key not in known and job["state"] in ("fetching", "failed"):
 			items.append({"id": key, "title": job.get("title"), "state": job["state"], "error": job.get("error"),
 				"started": job.get("started")})
-	return items
+	return {"items": items, "workers": [{k: w.get(k) for k in ("name", "device", "busy", "online", "seen")} for w in piano.workers()]}
+
+
+search_cache = {}                   # query -> (time, response)
+
+
+def search(query):
+	words = " ".join(query.get("q", [""])[0].split())[:120]
+	if len(words) < 2:
+		raise ValueError("type a song name")
+	if query.get("piano", ["1"])[0] != "0" and "piano" not in words.lower():
+		words += " piano"
+	cached = search_cache.get(words)
+	if cached and time.time() - cached[0] < 600:
+		result = cached[1]
+	else:
+		result = piano.search(words, 10)
+		if not result.get("ok"):
+			raise ValueError(result.get("error") or "search failed")
+		search_cache[words] = (time.time(), result)
+		log("search", repr(words), len(result.get("results", [])), "results")
+	songs = {re.sub(r".*[?&]v=|.*youtu\.be/", "", s.get("url") or "")[:11]: s["file"] for s in piano.songs() if s.get("url")}
+	queued = {e["id"] for e in piano.queue()}
+	busy = {job.get("title") for job in jobs.values() if job["state"] == "fetching"}
+	results = [{**r, "song": songs.get(r["id"]), "queued": r["id"] in queued or r["url"] in busy}
+		for r in result.get("results", [])]
+	return {"ok": True, "query": words, "max_seconds": result.get("max_seconds"), "results": results}
 
 
 def add_url(body):
 	url = piano.find_link(str(body.get("url", "")))
 	if not url:
 		raise ValueError("not a YouTube link")
-	conv = body.get("convert")
+	how = body.get("how")
 	key = f"url-{int(time.time() * 1000)}"
-	run_job(key, url, lambda: piano.fetch_link(url),
-		then_convert={"fast": True, "accurate": False}.get(conv))
+	run_job(key, url, lambda: piano.fetch_link(url), then_how=how if how in ("computer", "pi-fast", "pi-accurate") else None)
 	return {"ok": True, "job": key}
 
 
@@ -340,10 +401,10 @@ def upload(query, read_body, length, content_type):
 		if not result.get("ok"):
 			raise ValueError(result.get("error") or "could not add the MIDI file")
 		return result
-	conv = query.get("convert", [""])[0]
+	how = query.get("how", [""])[0]
 	key = f"file-{int(time.time() * 1000)}"
 	run_job(key, title, lambda: piano.fetch_file(path, title),
-		then_convert={"fast": True, "accurate": False}.get(conv))
+		then_how=how if how in ("computer", "pi-fast", "pi-accurate") else None)
 	return {"ok": True, "job": key}
 
 
@@ -375,6 +436,11 @@ class Handler(SimpleHTTPRequestHandler):
 		routes = {"/api/stats": stats, "/api/progress": progress, "/api/queue": queue_view}
 		if url.path in routes:
 			return self.send_json(routes[url.path]())
+		if url.path == "/api/search":
+			try:
+				return self.send_json(search(parse_qs(url.query)))
+			except ValueError as e:
+				return self.send_json({"ok": False, "error": str(e)}, HTTPStatus.BAD_REQUEST)
 		if url.path in ("/", "/index.html"):
 			self.path = "/__page__"
 			return self.send_page()
@@ -406,7 +472,10 @@ class Handler(SimpleHTTPRequestHandler):
 			if url.path == "/api/add":
 				return self.send_json(add_url(body))
 			if url.path == "/api/convert":
-				start_convert(str(body.get("id", "")), bool(body.get("fast")))
+				qid = str(body.get("id", ""))
+				if not any(e["id"] == qid for e in piano.queue()):
+					raise ValueError("not in the queue")
+				convert_as(qid, str(body.get("how") or ""))
 				return self.send_json({"ok": True})
 			if url.path == "/api/drop":
 				qid = str(body.get("id", ""))
@@ -427,6 +496,7 @@ class Handler(SimpleHTTPRequestHandler):
 				return self.send_json({"ok": True})
 			self.send_error(HTTPStatus.NOT_FOUND)
 		except (ValueError, KeyError, TypeError) as e:
+			log("refused", url.path, e)
 			self.send_json({"ok": False, "error": str(e)}, HTTPStatus.BAD_REQUEST)
 		except Exception as e:
 			traceback.print_exc()

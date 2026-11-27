@@ -100,9 +100,24 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 .item .what div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .what small { color: var(--dim); }
 .item button { min-height: 40px; padding: 0 12px; }
+#computers code { font-size: 12px; background: var(--button); padding: 1px 5px; border-radius: 4px; -webkit-user-select: all; user-select: all; }
 .item.current .what div:first-child { color: var(--right); }
 .err { color: var(--bad); }
 input[type=file] { display: none; }
+#modal { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+	background: rgba(0, 0, 0, .6); padding: 16px; }
+#modal.open { display: flex; }
+#modal .box { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; width: min(440px, 100%); }
+#modal p { margin: 0 0 14px; font-size: 17px; -webkit-user-select: text; user-select: text; }
+#modal input { width: 100%; margin-bottom: 14px; }
+#modal .row { justify-content: flex-end; }
+button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.result { align-items: flex-start; flex-wrap: wrap; }
+.result img { width: 96px; height: 54px; object-fit: cover; border-radius: 8px; background: var(--button); flex: none; }
+.result .what { flex: 1 1 200px; }
+.result .what div { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.result .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+#libpanel .tog { min-height: 40px; }
 </style>
 </head>
 <body>
@@ -145,6 +160,14 @@ input[type=file] { display: none; }
 	<span id="stats"></span>
 </footer>
 
+<div id="modal" role="dialog" aria-modal="true">
+	<div class="box">
+		<p id="mText"></p>
+		<input type="text" id="mInput" autocomplete="off">
+		<div class="row"><button id="mCancel">Cancel</button><button id="mOk" class="primary">OK</button></div>
+	</div>
+</div>
+
 <div id="lib">
 	<div id="libpanel">
 		<div class="libhead"><h1>Songs</h1><button id="libclose" aria-label="Close">✕</button></div>
@@ -159,21 +182,19 @@ input[type=file] { display: none; }
 
 		<h2>Add a song</h2>
 		<div class="row">
-			<input type="url" id="addUrl" placeholder="YouTube link" autocomplete="off" autocapitalize="off">
-			<select id="addHow" aria-label="Conversion">
-				<option value="fast">Fast (≈ song length)</option>
-				<option value="accurate">Accurate (≈ 20× length)</option>
-				<option value="">Decide later</option>
-			</select>
-			<button id="addGo" class="primary">Add</button>
+			<input type="search" id="addUrl" placeholder="Song name or YouTube link" autocomplete="off" autocapitalize="off" enterkeyhint="search">
+			<button id="addGo" class="primary">Search</button>
 		</div>
 		<div class="row" style="margin-top:8px">
+			<button class="tog" id="pianoOnly" title="Adds “piano” to the search: solo piano turns into much better notes">Piano versions</button>
 			<button id="uploadBtn">Upload a MIDI or audio file…</button>
 			<input type="file" id="upload" accept=".mid,.midi,.kar,audio/*,.mp3,.m4a,.wav,.ogg,.flac">
 		</div>
-		<p class="hint" id="addMsg">MIDI files are added right away. Audio and YouTube are turned into notes on the Pi
-			(or with tools/piano-convert.py on a computer). Pandora on Telegram does the same.</p>
+		<p class="hint" id="addMsg">Type a song name to search YouTube, or paste a link. Solo piano recordings
+			(e.g. “… piano tutorial”) give the best notes. MIDI files are added right away. Pandora on Telegram does the same.</p>
+		<div id="results"></div>
 
+		<p class="hint" id="computers"></p>
 		<h2 id="queueHead">Waiting for notes</h2>
 		<div id="queue"></div>
 
@@ -767,6 +788,28 @@ function renderLibrary() {
 		</div>`).join("") : `<p class="hint">No songs yet.</p>`;
 }
 
+// In-page dialog: in-app browsers (e.g. Web MIDI Browser on iPad) often ignore confirm() / prompt()
+function ask(text, { input = null, ok = "OK", cancel = true, danger = false } = {}) {
+	return new Promise(resolve => {
+		$("mText").textContent = text;
+		$("mInput").hidden = input === null;
+		$("mInput").value = input ?? "";
+		$("mOk").textContent = ok;
+		$("mOk").className = danger ? "danger" : "primary";
+		$("mCancel").hidden = !cancel;
+		$("modal").classList.add("open");
+		if (input !== null) setTimeout(() => { $("mInput").focus(); $("mInput").select(); }, 50);
+		const done = value => {
+			$("modal").classList.remove("open");
+			$("mOk").onclick = $("mCancel").onclick = $("mInput").onkeydown = null;
+			resolve(value);
+		};
+		$("mOk").onclick = () => done(input === null ? true : $("mInput").value);
+		$("mCancel").onclick = () => done(input === null ? false : null);
+		$("mInput").onkeydown = e => { if (e.key === "Enter") $("mOk").click(); if (e.key === "Escape") $("mCancel").click(); };
+	});
+}
+
 $("library").onclick = async e => {
 	const act = e.target.dataset.act, item = e.target.closest(".item");
 	if (!act || !item) return;
@@ -774,16 +817,17 @@ $("library").onclick = async e => {
 	try {
 		if (act === "practise") { closeLibrary(); bannerText = null; await loadSong(file); }
 		else if (act === "rename") {
-			const title = prompt("New name", song?.title || file);
+			const title = await ask("New name", { input: song?.title || file, ok: "Rename" });
 			if (title && title.trim()) { await api("api/song/rename", { file, title }); await loadSongs(); if (E.song?.file === file) E.song.title = title.trim(); }
 		} else if (act === "delete") {
-			if (confirm(`Delete “${song?.title || file}”? The MIDI file is removed from the Pi.`)) {
+			if (await ask(`Delete “${song?.title || file}”? The MIDI file is removed from the Pi.`, { ok: "Delete", danger: true })) {
 				await api("api/song/delete", { file });
-				if (E.song?.file === file) { E.song = null; store.set("song", ""); prepare(); position(0); }
+				if (E.song?.file === file) { E.song = null; store.set("song", ""); prepare(); position(0); refresh(); }
 				await loadSongs();
+				loadProgress();
 			}
 		}
-	} catch (err) { alert(err.message); }
+	} catch (err) { ask(err.message, { ok: "OK", cancel: false }); }
 };
 
 let queueTimer = null, queueCount = 0;
@@ -807,67 +851,163 @@ async function loadStats() {
 	} catch (e) { $("stToday").textContent = "?"; }
 }
 
+let workers = [], piOpen = new Set();
+
+function computerLine() {
+	const online = workers.filter(w => w.online);
+	if (online.length) return "💻 " + online.map(w => `${esc(w.name)} is online${w.device ? ` (${esc(w.device)})` : ""}${w.busy ? ", converting" : ""}`).join(" · ");
+	return "💻 No computer online. On your Mac/PC run <code>python tools/piano-convert.py --install</code> once; it then converts in the background whenever the computer is on.";
+}
+
+// The Pi converts only when asked here: ⚡ basic-pitch (~song length, rough) or 🎯 ByteDance (~20× length)
+function piButtons(key, seconds) {
+	if (!piOpen.has(key)) return `<button data-act="pi" title="Convert on the Pi instead (slow, last resort)">Pi…</button>`;
+	return `<button data-act="pi-fast" title="Spotify basic-pitch on the Pi: quick but rough">⚡ Pi${seconds ? ` ~${estimate(seconds, true)} min` : ""}</button>
+		<button data-act="pi-accurate" title="ByteDance model on the Pi: accurate but very slow">🎯 Pi${seconds ? ` ~${estimate(seconds, false)} min` : ""}</button>`;
+}
+
 async function loadQueue() {
-	let items = [];
-	try { items = await api("api/queue"); } catch (e) { $("queue").innerHTML = `<p class="hint err">${esc(e.message)}</p>`; return; }
+	let data;
+	try { data = await api("api/queue"); } catch (e) { $("queue").innerHTML = `<p class="hint err">${esc(e.message)}</p>`; return; }
+	const items = data.items || [];
+	workers = data.workers || [];
 	if (items.length < queueCount) loadSongs();      // something finished: refresh the library
 	queueCount = items.length;
+	$("computers").innerHTML = computerLine();
 	$("queueHead").style.display = $("queue").style.display = items.length ? "" : "none";
+	const online = workers.some(w => w.online);
 	$("queue").innerHTML = items.map(q => {
 		let state = "", buttons = "";
+		const retry = `<button data-act="computer" class="primary" title="Accurate model on your Mac/PC">🎯 On computer</button>` + piButtons(q.id, q.seconds);
 		if (q.state === "fetching") state = "Downloading…";
 		else if (q.state === "waiting") state = "Waiting for the Pi…";
 		else if (q.state === "converting") {
-			const left = q.minutes ? Math.max(1, Math.round(q.minutes - (Date.now() / 1000 - q.started) / 60)) : null;
-			state = `Writing down notes (${q.fast ? "fast" : "accurate"})` + (left ? `, ~${left} min left` : "") + "…";
-		} else if (q.state === "failed") {
-			state = `<span class="err">Failed: ${esc(q.error)}</span>`;
+			const left = q.minutes && q.started ? Math.max(1, Math.round(q.minutes - (Date.now() / 1000 - q.started) / 60)) : null;
+			state = `Writing down notes on the Pi${q.fast === true ? " (fast)" : q.fast === false ? " (accurate)" : ""}` + (left ? `, ~${left} min left` : "") + "…";
+		} else if (q.state === "computer") state = `Writing down notes on ${esc(q.worker)}…`;
+		else if (q.state === "for-computer") {
+			state = online ? "Waiting for a computer (starts within 30 s)" : "Waiting for a computer (none online)";
+			buttons = piButtons(q.id, q.seconds);
+		} else if (q.state === "failed" || q.state === "computer-failed") {
+			state = `<span class="err">Failed${q.state === "computer-failed" ? " on the computer" : " on the Pi"}: ${esc(q.error)}</span>`;
+			if (q.seconds) buttons = retry;
+		} else {
+			state = "Waiting: pick how to write down the notes";
+			buttons = retry;
 		}
-		if (q.state === "queued" || (q.state === "failed" && q.seconds)) {
-			buttons = `<button data-act="fast" title="Spotify basic-pitch on the Pi">⚡ ~${q.estimate_fast} min</button>
-				<button data-act="accurate" title="ByteDance model on the Pi">🎯 ~${q.estimate_accurate} min</button>`;
-		}
-		if (q.state !== "converting" && q.state !== "waiting" && q.state !== "fetching") buttons += `<button data-act="drop" aria-label="Remove">🗑</button>`;
-		return `<div class="item" data-id="${esc(q.id)}"><div class="what"><div>${esc(q.title || q.id)}</div>
-			<small>${q.seconds ? esc(clock(q.seconds)) + " · " : ""}${state || "Waiting (or convert on a computer)"}</small></div>${buttons}</div>`;
+		if (!["converting", "waiting", "fetching", "computer"].includes(q.state)) buttons += `<button data-act="drop" aria-label="Remove">🗑</button>`;
+		return `<div class="item result" data-id="${esc(q.id)}"><div class="what"><div>${esc(q.title || q.id)}</div>
+			<small>${q.seconds ? esc(clock(q.seconds)) + " · " : ""}${state}</small></div><div class="acts">${buttons}</div></div>`;
 	}).join("");
 }
 
 $("queue").onclick = async e => {
 	const act = e.target.dataset.act, item = e.target.closest(".item");
 	if (!act || !item) return;
+	if (act === "pi") { piOpen.add(item.dataset.id); return loadQueue(); }
 	try {
 		if (act === "drop") await api("api/drop", { id: item.dataset.id });
-		else await api("api/convert", { id: item.dataset.id, fast: act === "fast" });
-	} catch (err) { alert(err.message); }
+		else await api("api/convert", { id: item.dataset.id, how: act });
+	} catch (err) { ask(err.message, { ok: "OK", cancel: false }); }
 	loadQueue();
 };
 
-$("addGo").onclick = async () => {
-	const url = $("addUrl").value.trim();
-	if (!url) { $("addUrl").focus(); return; }
-	try {
-		await api("api/add", { url, convert: $("addHow").value || null });
-		$("addUrl").value = "";
-		$("addMsg").textContent = "Downloading… it shows up below, then in the library when the notes are ready.";
-	} catch (err) { $("addMsg").innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+const YOUTUBE = /https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com\/(?:watch\?\S*v=|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/;
+const estimate = (seconds, fast) => Math.max(1, Math.round((seconds || 0) * (fast ? 0.8 : 20) / 60 + 0.5));
+let pianoOnly = store.get("pianoOnly", true), results = [];
+
+function convertButtons(r, i) {
+	return `<button data-act="computer" class="primary" title="Accurate model on your Mac/PC">🎯 Accurate</button>
+		<button data-act="later" title="Just queue it">Later</button>` + piButtons("r" + i + r.id, r.seconds);
+}
+
+async function addLink(url, how) {
+	await api("api/add", { url, how: how || null });
+	$("addMsg").textContent = how === "computer"
+		? (workers.some(w => w.online) ? "Downloading; then your computer writes down the notes. It shows up in the library when ready."
+			: "Downloading. No computer is online: it waits for your Mac/PC (or use Pi… under “Waiting for notes”).")
+		: how ? "Downloading, then the Pi writes down the notes. It shows up in the library when ready."
+		: "Downloading. It waits under “Waiting for notes” until you choose how to convert it.";
 	loadQueue();
+}
+
+function renderResults() {
+	$("results").innerHTML = results.map((r, i) => {
+		const meta = [r.channel, r.seconds ? clock(r.seconds) : null,
+			r.views ? (r.views >= 1e6 ? (r.views / 1e6).toFixed(1) + "M" : r.views >= 1e3 ? Math.round(r.views / 1e3) + "k" : r.views) + " views" : null]
+			.filter(Boolean).map(esc).join(" · ");
+		let right;
+		if (r.song) right = `<button data-act="practise" class="primary">Practise</button>`;
+		else if (r.queued || r.adding) right = `<small class="hint">${r.adding ? esc(r.adding) : "In the queue"}</small>`;
+		else if (r.too_long) right = `<small class="hint">Too long (max ${Math.round((r.max || 900) / 60)} min)</small>`;
+		else right = convertButtons(r, i);
+		return `<div class="item result" data-i="${i}">
+			<img src="https://i.ytimg.com/vi/${esc(r.id)}/mqdefault.jpg" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+			<div class="what"><div title="${esc(r.title)}">${esc(r.title)}</div><small>${meta}${r.song ? " · in your songs" : ""}</small></div>
+			<div class="acts">${right}</div></div>`;
+	}).join("");
+}
+
+$("results").onclick = async e => {
+	const act = e.target.dataset.act, item = e.target.closest(".result");
+	if (!act || !item) return;
+	const i = +item.dataset.i, r = results[i];
+	if (act === "practise") { closeLibrary(); bannerText = null; await loadSong(r.song); return; }
+	if (act === "pi") { piOpen.add("r" + i + r.id); return renderResults(); }
+	const label = { computer: "on your computer", "pi-fast": "fast on the Pi", "pi-accurate": "accurate on the Pi" }[act];
+	try {
+		r.adding = act === "later" ? "Adding to the queue…" : `Adding (${label})…`;
+		renderResults();
+		await addLink(r.url, act === "later" ? null : act);
+		r.adding = act === "later" ? "In the queue" : `Converting ${label}`;
+	} catch (err) { r.adding = null; $("addMsg").innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+	renderResults();
 };
-$("addUrl").onkeydown = e => { if (e.key === "Enter") $("addGo").click(); };
+
+$("addGo").onclick = async () => {
+	const text = $("addUrl").value.trim();
+	if (!text) { $("addUrl").focus(); return; }
+	if (YOUTUBE.test(text)) {          // a link: show the same choice as Pandora
+		results = [];
+		const id = text.match(/(?:v=|youtu\.be\/|shorts\/|live\/)([\w-]{11})/)[1];
+		results = [{ id, title: "YouTube video", url: text, seconds: null, channel: null }];
+		renderResults();
+		$("addMsg").textContent = "How should the notes be written down?";
+		return;
+	}
+	$("addGo").disabled = true;
+	$("addMsg").textContent = `Searching YouTube for “${text}${pianoOnly && !/piano/i.test(text) ? " piano" : ""}”…`;
+	try {
+		const data = await api("api/search?" + new URLSearchParams({ q: text, piano: pianoOnly ? "1" : "0" }));
+		results = data.results.map(r => ({ ...r, max: data.max_seconds }));
+		$("addMsg").textContent = results.length
+			? `${results.length} results for “${data.query}”. Pick a solo piano version for the best notes.`
+			: `Nothing found for “${data.query}”.`;
+	} catch (err) {
+		results = [];
+		$("addMsg").innerHTML = `<span class="err">${esc(err.message)}</span>`;
+	}
+	$("addGo").disabled = false;
+	renderResults();
+};
+$("addUrl").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); $("addUrl").blur(); $("addGo").click(); } };
+$("addUrl").oninput = () => { $("addGo").textContent = YOUTUBE.test($("addUrl").value) ? "Add" : "Search"; };
+$("pianoOnly").onclick = () => { pianoOnly = !pianoOnly; store.set("pianoOnly", pianoOnly); $("pianoOnly").classList.toggle("on", pianoOnly); };
+$("pianoOnly").classList.toggle("on", pianoOnly);
 $("uploadBtn").onclick = () => $("upload").click();
 $("upload").onchange = async e => {
 	const file = e.target.files[0];
 	e.target.value = "";
 	if (!file) return;
-	const title = prompt("Song name", file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "));
+	const title = await ask("Song name", { input: file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "), ok: "Upload" });
 	if (title === null) return;
 	$("addMsg").textContent = `Uploading ${file.name}…`;
 	try {
-		const q = new URLSearchParams({ name: file.name, title, convert: $("addHow").value });
+		const q = new URLSearchParams({ name: file.name, title, how: "computer" });   // audio: accurate notes on a Mac/PC
 		const res = await fetch("api/upload?" + q, { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
 		const data = await res.json();
 		if (!res.ok || data.ok === false) throw new Error(data.error || "HTTP " + res.status);
-		$("addMsg").textContent = data.file ? `Added “${data.title}” to the library.` : "Uploaded. It is being turned into notes (see below).";
+		$("addMsg").textContent = data.file ? `Added “${data.title}” to the library.` : "Uploaded. Your computer will write down the notes (see “Waiting for notes”).";
 		await loadSongs();
 	} catch (err) { $("addMsg").innerHTML = `<span class="err">${esc(err.message)}</span>`; }
 	loadQueue();

@@ -321,23 +321,25 @@ async def receipt_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 PIANO_LOCK = asyncio.Lock()
 # Where the computer converter lives (HTML: tap a command in Telegram to copy it)
 PC_HINT = (
-	"💻 <b>Nuty na komputerze</b>: skrypt <code>tools/piano-convert.py</code> w repo raspberry-projects.\n\n"
+	"💻 <b>Nuty na komputerze</b>: skrypt <code>tools/piano-convert.py</code> w repo raspberry-projects. "
+	"Raz zainstalowany (<code>--install</code>) działa w tle i sam bierze piosenki wysłane „na komputer”.\n\n"
 	"<b>Mac</b>\n"
-	"<code>cd ~/raspberry-projects &amp;&amp; git pull &amp;&amp; python3 tools/piano-convert.py</code>\n"
+	"<code>cd ~/raspberry-projects &amp;&amp; git pull &amp;&amp; python3 tools/piano-convert.py --install</code>\n"
 	"Pierwszy raz (pobiera repo):\n"
 	"<code>git clone https://github.com/bozek-lu/raspberry-projects.git ~/raspberry-projects</code>\n\n"
 	"<b>Windows</b> (PowerShell)\n"
-	"<code>cd ~\\claude\\raspberry-projects; git pull; python tools\\piano-convert.py</code>\n\n"
-	"Pierwsze uruchomienie instaluje ok. 1 GB (torch) i pobiera model. Potrzebny Python 3.10+ i ssh do mnie. "
-	"Gotowe nuty sama ci wyślę.")
+	"<code>cd ~\\claude\\raspberry-projects; git pull; python tools\\piano-convert.py --install</code>\n\n"
+	"Bez <code>--install</code> skrypt spisze to, co czeka teraz, i się zakończy. Pierwsze uruchomienie instaluje "
+	"ok. 1 GB (torch) i pobiera model. Potrzebny Python 3.10+ i ssh do mnie. Gotowe nuty sama ci wyślę.")
 
 def piano_choice(entry):
 	qid, seconds = entry["id"], entry.get("seconds")
 	return InlineKeyboardMarkup([
-		[InlineKeyboardButton(f"⚡ Szybko tutaj (~{piano.estimate(seconds, True)} min, mniej dokładnie)", callback_data=f"pn:fast:{qid}")],
-		[InlineKeyboardButton(f"🎯 Dokładnie tutaj (~{piano.estimate(seconds, False)} min)", callback_data=f"pn:acc:{qid}")],
-		[InlineKeyboardButton("💻 Na komputerze", callback_data=f"pn:pc:{qid}"),
+		[InlineKeyboardButton("💻 Dokładnie na komputerze", callback_data=f"pn:pc:{qid}"),
 		 InlineKeyboardButton("🗑️ Usuń", callback_data=f"pn:del:{qid}")],
+		# The Pi is the last resort: slow (accurate) or rough (fast)
+		[InlineKeyboardButton(f"⚡ Szybko na Pi (~{piano.estimate(seconds, True)} min, mniej dokładnie)", callback_data=f"pn:fast:{qid}")],
+		[InlineKeyboardButton(f"🎯 Dokładnie na Pi (~{piano.estimate(seconds, False)} min)", callback_data=f"pn:acc:{qid}")],
 	])
 
 async def youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -405,8 +407,15 @@ async def piano_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 		await asyncio.to_thread(piano.drop, qid)
 		await query.edit_message_text(f"🗑️ Usunięte z kolejki: {piano.describe(entry)}")
 	elif action == "pc":
-		await query.edit_message_text(f"⏳ {html.escape(piano.describe(entry))} zostaje w kolejce.\n\n{PC_HINT}",
-			parse_mode="HTML", disable_web_page_preview=True)
+		piano.request_computer(qid)
+		online = [w for w in piano.workers() if w["online"]]
+		if online:
+			await query.edit_message_text(f"⏳ {html.escape(piano.describe(entry))}: nuty spisze komputer "
+				f"{html.escape(online[0]['name'])} (zaczyna w ciągu pół minuty). Gotowe wyślę.", parse_mode="HTML")
+		else:
+			await query.edit_message_text(f"⏳ {html.escape(piano.describe(entry))} czeka na komputer: żaden nie jest "
+				f"teraz włączony. Spisze nuty, gdy włączysz Maca/PC.\n\n{PC_HINT}",
+				parse_mode="HTML", disable_web_page_preview=True)
 	else:
 		fast = action == "fast"
 		waiting = " Najpierw kończę poprzednią." if PIANO_LOCK.locked() else ""

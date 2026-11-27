@@ -14,6 +14,8 @@ ExecStart=/usr/bin/python3 /home/lbx/server/piano/tutor/server.py
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=5
+# A restart must not kill a conversion running in the transcriber container (it finishes on its own)
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

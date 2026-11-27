@@ -7,6 +7,7 @@
                                                    see tools/piano-convert.py)
   transcribe.py add-midi <path> <title>            add a ready MIDI file to the songs
   transcribe.py drop <id>                          remove an item from the queue
+  transcribe.py search <words> [count]             YouTube search: candidates for "fetch" (nothing downloaded)
   transcribe.py <url>                              fetch + convert in one go
 
 Songs go to SONGS_DIR (index songs.json), the queue to QUEUE_DIR (index queue.json).
@@ -122,6 +123,29 @@ def fetch_url(url):
 		info = json.loads(run.stdout.strip().splitlines()[-1])
 		return queue_audio(os.path.join(work, files[0]), info.get("id"), info.get("title"),
 			info.get("webpage_url", url))
+
+
+def search(words, count=8):
+	"""YouTube search by song name (flat: titles and lengths only, nothing downloaded)."""
+	run = subprocess.run(["yt-dlp", "--flat-playlist", "--dump-json", "--quiet", "--no-warnings",
+		f"ytsearch{count}:{words}"], capture_output=True, text=True, timeout=120)
+	if run.returncode != 0 and not run.stdout.strip():
+		lines = (run.stderr or "").strip().splitlines()
+		finish(ok=False, error="yt-dlp: " + (lines[-1] if lines else f"exit {run.returncode}"))
+	results = []
+	for line in run.stdout.splitlines():
+		try:
+			info = json.loads(line)
+		except ValueError:
+			continue
+		if not info.get("id") or info.get("live_status") in ("is_live", "is_upcoming"):
+			continue
+		seconds = round(info["duration"]) if info.get("duration") else None
+		results.append({"id": info["id"], "title": info.get("title") or info["id"],
+			"url": f"https://www.youtube.com/watch?v={info['id']}", "seconds": seconds,
+			"channel": info.get("channel") or info.get("uploader"), "views": info.get("view_count"),
+			"too_long": bool(seconds and seconds > MAX_SECONDS)})
+	return results
 
 
 def fetch_file(path, title):
@@ -347,6 +371,9 @@ def main():
 		register(args[1])
 	elif command == "add-midi" and len(args) == 3:
 		add_midi(args[1], args[2])
+	elif command == "search" and len(args) in (2, 3):
+		finish(ok=True, max_seconds=MAX_SECONDS,
+			results=search(args[1], max(1, min(20, int(args[2]))) if len(args) == 3 else 8))
 	elif command == "drop" and len(args) == 2:
 		queued(args[1])
 		remove_queued(args[1])

@@ -11,7 +11,7 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 | `pi/home/receipts.py` | Photos/PDFs sent to Pandora go to Paperless and get linked to the matching Actual transaction |
 | `pi/home/piano.py`, `pi/home/server/piano/` | Piano songs for the EZ-310 tutor ([piano-tutor](https://github.com/bozek-lu/piano-tutor)), see below; song server on `:8095` for the Tab5 |
 | `pi/home/server/piano/tutor/` | Piano tutor for the iPad: page, practice stats, song library (`:8096`, tailnet `:8445`), see below |
-| `tools/piano-convert.py` | Converts the Pi's piano queue on a faster computer |
+| `tools/piano-convert.py` | Converts the Pi's piano queue on a Mac/PC (`--install`: in the background, automatically) |
 | `pi/sync-filter.txt` | What gets synced; secrets and data are excluded |
 | `claude-usage-push/` | Mac launchd job pushing Claude usage to the Pi |
 
@@ -19,14 +19,26 @@ Code and config for **homepi** (Raspberry Pi 4, reachable over Tailscale) plus M
 
 - **YouTube link or audio file** -> Pandora downloads it into the queue (`~/server/piano/queue`, 16 kHz WAV)
   and asks how to write down the notes:
-  - ⚡ fast here: Spotify basic-pitch, about the song's length on the Pi 4, rough (about 60% note agreement)
-  - 🎯 accurate here: ByteDance piano transcription, about 20x the song's length on the Pi 4
-  - 💻 on a computer: leave it queued and run `python tools/piano-convert.py` on a Mac/PC (same accurate
-    model, much faster; sets up its own Python environment on first run; needs ssh to the Pi)
+  - 💻 accurately on a computer (first choice): the item goes to `queue/computer.json` and a Mac/PC running
+    `tools/piano-convert.py --watch` picks it up within 30 s (ByteDance model; a 7:25 song took 2 min on a PC CPU)
+  - last resort on the Pi: ⚡ fast (Spotify basic-pitch, about the song's length, rough, ~60% note agreement)
+    or 🎯 accurate (ByteDance, about 20x the song's length)
 - **MIDI file** -> straight into the songs.
 - Songs get the right hand on channel 1 and the left on channel 2 (EZ-310 light channels), notes folded
   into the keyboard's 61 keys. Pandora sends each finished song; the Tab5 reads `http://homepi.local:8095/songs.json`.
 - `/piano` lists songs, `/piano kolejka` the queue (with convert / delete buttons).
+
+### Converting on a Mac/PC
+
+`tools/piano-convert.py` (own Python environment in `~/.cache/piano-convert`, ssh key login to the Pi):
+
+- `--install` once per computer: starts `--watch` at login (Windows: `HKCU\...\Run` value `PianoConvert`,
+  macOS: LaunchAgent `lu.piano-convert`) and right away; `--uninstall` removes it. Log: `~/.cache/piano-convert/worker.log`.
+- `--watch` checks in with the Pi every 30 s (`queue/.worker-<host>`, shown online in the tutor), claims one item
+  (`queue/.claim-<id>`), converts it, registers the song; a failure lands in `queue/<id>.computer-error`.
+- Without options it converts the whole queue once and stops; `--list` shows it.
+- GPU: the environment gets CPU torch. For an NVIDIA GPU install the CUDA build into it, e.g.
+  `~/.cache/piano-convert/venv/Scripts/python -m pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu128`.
 
 ## Piano tutor (tablet)
 
@@ -42,12 +54,17 @@ key presses, waits for the right keys ("Wait for me") or plays in time at a chos
 - Options (⚙): Guide sound (lit notes muted with CC7 = 0 on channels 1/2 otherwise), Other hand (the hand you
   are not practising, on channel 3), Count-in (4 GM wood-block clicks on channel 10), Speed up (+5% tempo after a
   Play along run with 90% right, up to 100%). A / B on the bottom bar repeat a part of the song.
-- ☰ Songs: practice minutes (today, week, streak, last 4 weeks), add a YouTube link or upload a MIDI/audio file
-  (same code as Pandora: `~/piano.py` and the transcriber), the conversion queue with ⚡/🎯 buttons, rename/delete.
+- ☰ Songs: practice minutes (today, week, streak, last 4 weeks); search YouTube by song name ("Piano versions"
+  adds "piano") or paste a link, or upload a MIDI/audio file (same code as Pandora: `~/piano.py` and the
+  transcriber); 🎯 Accurate sends it to a computer, "Pi…" reveals the Pi buttons; the queue shows which computer
+  is online and converting; rename/delete use in-page dialogs (in-app browsers ignore `confirm()`/`prompt()`).
 - Practice sessions go to `~/server/piano/practice.json` (time counts while playing; in Wait for me only with a
   key press in the last 20 s). The Homepage tile (top "Raspberry Pi" section) reads `/api/stats`.
 - On the keyboard: Function 041 Light Guide On, 042/043 light channels 1/2 (defaults).
 - `deploy.sh` restarts the service when `server.py` or the unit changes; `index.html` needs only a page reload.
+  The unit has `KillMode=process`, so a restart leaves a running Pi conversion alone.
+- Homepage `custom.js`: opened as `homepi.local` (LAN), dashboard links point to the LAN host (plain-http services,
+  tutor on `:8096`); Actual, Vaultwarden and Paperless stay on the Tailscale https addresses.
 
 ## Workflow
 
